@@ -1,0 +1,183 @@
+[
+  {
+    "key": "group_compare_fields",
+    "title": "Comparison Page Fields",
+    "fields": [
+      {
+        "key": "field_competitor_name",
+        "label": "Competitor Name",
+        "name": "competitor_name",
+        "type": "text",
+        "required": 1
+      },
+      {
+        "key": "field_competitor_strength",
+        "label": "Competitor Strength",
+        "name": "competitor_strength",
+        "type": "textarea",
+        "required": 0
+      },
+      {
+        "key": "field_competitor_weakness",
+        "label": "Competitor Weakness",
+        "name": "competitor_weakness",
+        "type": "textarea",
+        "required": 0
+      },
+      {
+        "key": "field_ideal_user",
+        "label": "Ideal User",
+        "name": "ideal_user",
+        "type": "text",
+        "required": 0
+      },
+      {
+        "key": "field_comparison_summary",
+        "label": "Comparison Summary",
+        "name": "comparison_summary",
+        "type": "textarea",
+        "required": 0
+      },
+      {
+        "key": "field_compare_cta",
+        "label": "CTA",
+        "name": "CTA",
+        "type": "text",
+        "required": 0
+      }
+    ],
+    "location": [
+      [
+        {
+          "param": "post_type",
+          "operator": "==",
+          "value": "compare"
+        }
+      ]
+    ],
+    "menu_order": 0,
+    "position": "normal",
+    "style": "default",
+    "label_placement": "top",
+    "instruction_placement": "label",
+    "hide_on_screen": "",
+    "active": true,
+    "description": ""
+  },
+  {
+    "key": "group_industry_fields",
+    "title": "Industry Page Fields",
+    "fields": [
+      {
+        "key": "field_industry_name",
+        "label": "Industry Name",
+        "name": "industry_name",
+        "type": "text",
+        "required": 1
+      },
+      {
+        "key": "field_seo_challenge",
+        "label": "SEO Challenge",
+        "name": "SEO_challenge",
+        "type": "textarea",
+        "required": 0
+      },
+      {
+        "key": "field_outreach_problem",
+        "label": "Outreach Problem",
+        "name": "outreach_problem",
+        "type": "textarea",
+        "required": 0
+      },
+      {
+        "key": "field_relevant_feature",
+        "label": "Relevant Feature",
+        "name": "relevant_feature",
+        "type": "text",
+        "required": 0
+      },
+      {
+        "key": "field_success_metric",
+        "label": "Success Metric",
+        "name": "success_metric",
+        "type": "text",
+        "required": 0
+      }
+    ],
+    "location": [
+      [
+        {
+          "param": "post_type",
+          "operator": "==",
+          "value": "industry"
+        }
+      ]
+    ],
+    "menu_order": 0,
+    "position": "normal",
+    "style": "default",
+    "label_placement": "top",
+    "instruction_placement": "label",
+    "hide_on_screen": "",
+    "active": true,
+    "description": ""
+  },
+  {
+    "key": "group_problem_fields",
+    "title": "Problem Page Fields",
+    "fields": [
+      {
+        "key": "field_problem_issue",
+        "label": "Issue",
+        "name": "issue",
+        "type": "text",
+        "required": 1
+      },
+      {
+        "key": "field_why_it_happens",
+        "label": "Why It Happens",
+        "name": "why_it_happens",
+        "type": "textarea",
+        "required": 0
+      },
+      {
+        "key": "field_business_impact",
+        "label": "Business Impact",
+        "name": "business_impact",
+        "type": "textarea",
+        "required": 0
+      },
+      {
+        "key": "field_problem_fix",
+        "label": "Fix",
+        "name": "fix",
+        "type": "textarea",
+        "required": 0
+      },
+      {
+        "key": "field_petalrank_solution",
+        "label": "PetalRank Solution",
+        "name": "PetalRank_solution",
+        "type": "textarea",
+        "required": 0
+      }
+    ],
+    "location": [
+      [
+        {
+          "param": "post_type",
+          "operator": "==",
+          "value": "problem"
+        }
+      ]
+    ],
+    "menu_order": 0,
+    "position": "normal",
+    "style": "default",
+    "label_placement": "top",
+    "instruction_placement": "label",
+    "hide_on_screen": "",
+    "active": true,
+    "description": ""
+  }
+]
