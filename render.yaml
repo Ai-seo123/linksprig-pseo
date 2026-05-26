@@ -22,7 +22,7 @@ services:
     name: linksprig-frontend
     rootDir: frontend
     buildCommand: npm install && npm run build
-    publishDir: dist
+    publishPath: dist
     envVars:
       - key: VITE_API_URL
         fromService:
