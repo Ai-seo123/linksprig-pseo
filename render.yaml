@@ -1,10 +1,9 @@
 services:
-  # Python FastAPI Backend Web Service
+  # Fullstack Web Service (FastAPI + React via Docker)
   - type: web
-    name: linksprig-backend
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    name: linksprig-app
+    env: docker
+    plan: free
     envVars:
       - key: PORT
         value: 10000
@@ -16,16 +15,5 @@ services:
         sync: false
       - key: WP_APP_PASSWORD
         sync: false
-
-  # React Frontend Static Site
-  - type: web
-    name: linksprig-frontend
-    env: static
-    rootDir: frontend
-    buildCommand: npm install && npm run build
-    staticPublishPath: dist
-    envVars:
-      - key: VITE_API_URL
+      - key: GEMINI_API_KEY
         sync: false
-
-

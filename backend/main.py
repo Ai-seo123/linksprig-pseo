@@ -3,6 +3,8 @@ import shutil
 import subprocess
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from auth import verify_password, create_access_token, verify_captcha, get_current_user
@@ -124,4 +126,9 @@ def get_jobs_status(username: str = Depends(get_current_user)):
 @app.get("/api/health")
 def health_check():
     return {"status": "ok"}
+
+# Serve frontend static files
+frontend_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
+if os.path.exists(frontend_dist):
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
 
