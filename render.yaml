@@ -22,7 +22,6 @@ services:
   - type: web
     name: linksprig-frontend
     env: static
-    plan: free
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist
