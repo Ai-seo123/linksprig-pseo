@@ -3,6 +3,7 @@ services:
   - type: web
     name: linksprig-backend
     env: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     envVars:
@@ -21,6 +22,7 @@ services:
   - type: web
     name: linksprig-frontend
     env: static
+    plan: free
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist
