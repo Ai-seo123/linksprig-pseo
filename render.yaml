@@ -18,9 +18,8 @@ services:
         sync: false
 
   # React Frontend Static Site
-  - type: web
+  - type: static
     name: linksprig-frontend
-    env: static
     rootDir: frontend
     buildCommand: npm install && npm run build
     publishDir: dist
