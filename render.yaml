@@ -26,8 +26,6 @@ services:
     staticPublishPath: dist
     envVars:
       - key: VITE_API_URL
-        fromService:
-          name: linksprig-backend
-          type: web
-          property: url
+        sync: false
+
 
