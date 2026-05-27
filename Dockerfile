@@ -11,6 +11,8 @@ RUN npm run build
 # Stage 2: Combine with Python FastAPI backend
 FROM python:3.10-slim
 WORKDIR /app
+ENV PYTHONPATH=/app/backend
+
 
 
 # Copy backend requirements and install
