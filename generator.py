@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from ai_writer import AIWriter
 from internal_linker import InternalLinker
 from qa_validator import QAValidator
+from formatter import format_blog_html
 
 # Load environment
 load_dotenv()
@@ -440,17 +441,13 @@ class PSEOEngine:
             orig_page = original_pages[idx]
             post_type = orig_page["post_type"]
             
-            # Flatten body sections into standard HTML content
-            content_html = page["intro"]
-            for sec in page["body_sections"]:
-                content_html += f"\n\n<h3>{sec['heading']}</h3>\n{sec['content']}"
-            
-            # Format FAQs as HTML block
-            faq_html = "\n\n<h3>Frequently Asked Questions</h3>\n<dl>"
-            for faq in page["faqs"]:
-                faq_html += f"\n  <dt><strong>{faq['question']}</strong></dt>\n  <dd>{faq['answer']}</dd>"
-            faq_html += "\n</dl>"
-            content_html += faq_html
+            # Flatten body sections into standard HTML content with Table of Contents layout
+            content_html = format_blog_html(
+                title=page["title"],
+                intro_html=page["intro"],
+                body_sections=page["body_sections"],
+                faqs_list=page["faqs"]
+            )
             
             # Format JSON-LD schema
             schema_str = json.dumps(page["schema_json"])
@@ -544,16 +541,13 @@ class PSEOEngine:
             # Make sure these match custom post types created in WP (compare, industry, problem, use_case, guide)
             wp_post_type = post_type
             
-            # Build body content
-            content_html = page["intro"]
-            for sec in page["body_sections"]:
-                content_html += f"\n\n<h3>{sec['heading']}</h3>\n{sec['content']}"
-            
-            faq_html = "\n\n<h3>Frequently Asked Questions</h3>\n<dl>"
-            for faq in page["faqs"]:
-                faq_html += f"\n  <dt><strong>{faq['question']}</strong></dt>\n  <dd>{faq['answer']}</dd>"
-            faq_html += "\n</dl>"
-            content_html += faq_html
+            # Build body content with Table of Contents layout
+            content_html = format_blog_html(
+                title=page["title"],
+                intro_html=page["intro"],
+                body_sections=page["body_sections"],
+                faqs_list=page["faqs"]
+            )
             
             cat_name = page.get("category", "")
             cat_id = get_wp_category_id(cat_name, WP_URL, WP_USER, WP_APP_PASSWORD) if cat_name else None

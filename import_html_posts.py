@@ -4,6 +4,7 @@ import copy
 import pandas as pd
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from formatter import format_imported_blog_html
 import requests
 import json
 import base64
@@ -263,7 +264,10 @@ def main():
             el.decompose()
 
         # Decode contents to get inner HTML
-        content_html = art_copy.decode_contents().strip()
+        raw_body_html = art_copy.decode_contents().strip()
+        
+        # Format content HTML with Table of Contents layout
+        content_html = format_imported_blog_html(title, raw_body_html)
 
         # 5. Build Slug
         slug = clean_slug(title)

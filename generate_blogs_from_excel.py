@@ -7,6 +7,7 @@ import time
 import pandas as pd
 import google.generativeai as genai
 from dotenv import load_dotenv
+from formatter import format_blog_html
 
 # Load environment
 load_dotenv()
@@ -234,16 +235,13 @@ def push_post_to_wordpress(page, keyword):
     b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
     headers["X-HTTP-Authorization"] = f"Basic {b64_auth}"
     
-    # Build content HTML
-    content_html = page["intro"]
-    for sec in page["body_sections"]:
-        content_html += f"\n\n<h3>{sec['heading']}</h3>\n{sec['content']}"
-    
-    faq_html = "\n\n<h3>Frequently Asked Questions</h3>\n<dl>"
-    for faq in page["faqs"]:
-        faq_html += f"\n  <dt><strong>{faq['question']}</strong></dt>\n  <dd>{faq['answer']}</dd>"
-    faq_html += "\n</dl>"
-    content_html += faq_html
+    # Build content HTML with Table of Contents layout
+    content_html = format_blog_html(
+        title=page["title"],
+        intro_html=page["intro"],
+        body_sections=page["body_sections"],
+        faqs_list=page["faqs"]
+    )
     
     cat_name = page.get("category", "")
     cat_id = get_wp_category_id(cat_name, WP_URL, WP_USER, WP_APP_PASSWORD) if cat_name else None
@@ -341,16 +339,13 @@ def main():
             print(f" - [FAILED] Skipping '{topic}' due to AI writing error.")
             continue
             
-        # Flatten content HTML for CSV export
-        content_html = page_data["intro"]
-        for sec in page_data["body_sections"]:
-            content_html += f"\n\n<h3>{sec['heading']}</h3>\n{sec['content']}"
-            
-        faq_html = "\n\n<h3>Frequently Asked Questions</h3>\n<dl>"
-        for faq in page_data["faqs"]:
-            faq_html += f"\n  <dt><strong>{faq['question']}</strong></dt>\n  <dd>{faq['answer']}</dd>"
-        faq_html += "\n</dl>"
-        content_html += faq_html
+        # Flatten content HTML for CSV export with Table of Contents layout
+        content_html = format_blog_html(
+            title=page_data["title"],
+            intro_html=page_data["intro"],
+            body_sections=page_data["body_sections"],
+            faqs_list=page_data["faqs"]
+        )
         
         csv_row = {
             "post_title": page_data["title"],
