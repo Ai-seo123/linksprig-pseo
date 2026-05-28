@@ -47,6 +47,8 @@ const Dashboard = ({ token, onLogout }) => {
             });
             setStatusMap(statuses);
           }
+        } else if (response.status === 401) {
+          onLogout();
         }
       } catch (err) {
         console.error('Error fetching existing jobs:', err);
@@ -107,6 +109,8 @@ const Dashboard = ({ token, onLogout }) => {
 
             return hasChanges ? updated : prev;
           });
+        } else if (response.status === 401) {
+          onLogout();
         }
       } catch (err) {
         console.error('Error polling jobs:', err);
@@ -170,6 +174,11 @@ const Dashboard = ({ token, onLogout }) => {
           },
           body: formData
         });
+
+        if (response.status === 401) {
+          onLogout();
+          return;
+        }
 
         const data = await response.json();
 

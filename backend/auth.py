@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import time
 import jwt
 import bcrypt
 from fastapi import HTTPException, status, Depends
@@ -22,7 +23,7 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(data: dict):
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = int(time.time()) + (ACCESS_TOKEN_EXPIRE_MINUTES * 60)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, JWT_SECRET, algorithm=ALGORITHM)
     return encoded_jwt
