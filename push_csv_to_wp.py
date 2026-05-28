@@ -151,9 +151,19 @@ def push_csv_to_wp():
     
     with open(csv_path, mode='r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
+        headers = reader.fieldnames
         rows = list(reader)
         
     print(f"[INFO] Found {len(rows)} entries in CSV.")
+    
+    # Validate required headers
+    required_headers = ["post_title", "post_slug", "post_content"]
+    if headers is not None:
+        missing_headers = [h for h in required_headers if h not in headers]
+        if missing_headers:
+            print(f"[ERROR] CSV file is missing required columns: {', '.join(missing_headers)}")
+            print(f"[INFO] Found columns: {', '.join(headers)}")
+            exit(1)
     
     # Define CPT field mappings
     cpt_fields = {
@@ -168,7 +178,7 @@ def push_csv_to_wp():
         post_title = row.get("post_title")
         post_slug = row.get("post_slug")
         post_content = row.get("post_content")
-        post_type = row.get("post_type")
+        post_type = row.get("post_type") or "post"
         meta_title = row.get("meta_title")
         meta_description = row.get("meta_description")
         schema_json_str = row.get("schema_json", "{}")

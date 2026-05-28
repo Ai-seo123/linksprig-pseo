@@ -79,12 +79,27 @@ def process_uploaded_file(file_path: str, filename: str):
             if not os.path.exists(venv_python):
                 venv_python = "python"
                 
-            subprocess.run([venv_python, script_path], env=env, cwd=parent_dir, check=True)
+            result = subprocess.run(
+                [venv_python, script_path], 
+                env=env, 
+                cwd=parent_dir, 
+                capture_output=True,
+                text=True,
+                check=True
+            )
             jobs_status[filename] = {"status": "completed", "error": None}
             print(f"Successfully processed {filename} with {script_to_run}")
         except subprocess.CalledProcessError as e:
-            jobs_status[filename] = {"status": "failed", "error": f"Script failed with exit code {e.returncode}"}
+            error_details = (e.stderr or e.stdout or "").strip()
+            if not error_details:
+                error_details = f"Script failed with exit code {e.returncode}"
+            else:
+                if len(error_details) > 300:
+                    error_details = error_details[:297] + "..."
+            jobs_status[filename] = {"status": "failed", "error": error_details}
             print(f"Error executing {script_to_run}: {e}")
+            if e.stderr:
+                print(f"Stderr:\n{e.stderr}")
         except Exception as e:
             jobs_status[filename] = {"status": "failed", "error": str(e)}
             print(f"Error executing {script_to_run}: {e}")
@@ -106,7 +121,9 @@ async def upload_file(
         raise HTTPException(status_code=400, detail="Unsupported file format")
 
     # Save the file temporarily
-    upload_dir = os.path.join("..", "output", "uploads")
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(backend_dir)
+    upload_dir = os.path.join(parent_dir, "output", "uploads")
     os.makedirs(upload_dir, exist_ok=True)
     file_path = os.path.join(upload_dir, file.filename)
     

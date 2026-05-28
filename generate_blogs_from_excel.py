@@ -308,7 +308,12 @@ def main():
     df.columns = [c.strip() for c in df.columns]
     
     # Drop rows that don't have topics
-    df = df.dropna(subset=["Topics"])
+    if "Topics" in df.columns:
+        df = df.dropna(subset=["Topics"])
+    else:
+        print("[ERROR] 'Topics' column not found in Excel sheet.")
+        print(f"[INFO] Found columns: {', '.join(df.columns)}")
+        exit(1)
     
     print(f"[INFO] Found {len(df)} topics in Excel sheet.")
     
@@ -325,8 +330,10 @@ def main():
     successful_slugs = set()
     
     for idx, row in df.iterrows():
-        topic = row["Topics"].strip()
-        keyword = str(row["Keyword"]).strip() if "Keyword" in df.columns else ""
+        topic = str(row["Topics"]).strip() if row.get("Topics") is not None else ""
+        if not topic or topic.lower() == 'nan':
+            continue
+        keyword = str(row["Keyword"]).strip() if "Keyword" in df.columns and row.get("Keyword") is not None else ""
         
         # Check if already generated
         slug_check = clean_slug(topic)
