@@ -1,3 +1,7 @@
+import warnings
+# Suppress google.generativeai and other Future/Deprecation warnings before import
+warnings.filterwarnings("ignore")
+
 import os
 import re
 import json
@@ -219,7 +223,7 @@ def generate_blog_post(topic, keyword):
         return result
     except Exception as e:
         print(f" - [Error] AI generation failed: {e}")
-        return None
+        return {"error": str(e)}
 
 def push_post_to_wordpress(page, keyword):
     if not WP_URL or not WP_USER or not WP_APP_PASSWORD:
@@ -345,6 +349,9 @@ def main():
         if not page_data:
             print(f" - [FAILED] Skipping '{topic}' due to AI writing error.")
             continue
+        elif "error" in page_data:
+            print(f"[FATAL] Halting pipeline due to AI API error on topic '{topic}'.")
+            exit(1)
             
         # Flatten content HTML for CSV export with Table of Contents layout
         content_html = format_blog_html(

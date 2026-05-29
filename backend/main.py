@@ -73,6 +73,7 @@ def process_uploaded_file(file_path: str, filename: str):
     if os.path.exists(script_path):
         env = os.environ.copy()
         env["UPLOADED_FILE_PATH"] = os.path.abspath(file_path)
+        env["PYTHONWARNINGS"] = "ignore"
         try:
             # Run using virtual environment's Python interpreter
             venv_python = os.path.join(parent_dir, ".venv", "Scripts", "python.exe")
@@ -90,12 +91,15 @@ def process_uploaded_file(file_path: str, filename: str):
             jobs_status[filename] = {"status": "completed", "error": None}
             print(f"Successfully processed {filename} with {script_to_run}")
         except subprocess.CalledProcessError as e:
-            error_details = (e.stderr or e.stdout or "").strip()
+            err_output = (e.stderr or "").strip()
+            out_output = (e.stdout or "").strip()
+            error_details = err_output if err_output else out_output
+            
             if not error_details:
                 error_details = f"Script failed with exit code {e.returncode}"
             else:
-                if len(error_details) > 300:
-                    error_details = error_details[:297] + "..."
+                if len(error_details) > 400:
+                    error_details = "..." + error_details[-397:]
             jobs_status[filename] = {"status": "failed", "error": error_details}
             print(f"Error executing {script_to_run}: {e}")
             if e.stderr:

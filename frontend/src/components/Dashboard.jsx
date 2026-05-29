@@ -213,6 +213,47 @@ const Dashboard = ({ token, onLogout }) => {
     });
   };
 
+  // Determine global pipeline status
+  const getPipelineStatus = () => {
+    const statuses = Object.values(statusMap);
+    if (statuses.length === 0) return null;
+
+    const isRunning = statuses.some(
+      s => s.state === 'uploading' || s.state === 'queued' || s.state === 'processing'
+    );
+    if (isRunning) {
+      return {
+        type: 'running',
+        message: 'Pipeline is executing in the background...',
+        icon: <Loader2 className="animate-spin" size={20} color="#818cf8" />
+      };
+    }
+
+    const allCompleted = statuses.every(s => s.state === 'success' || s.state === 'error');
+    if (allCompleted) {
+      const hasSuccess = statuses.some(s => s.state === 'success');
+      if (hasSuccess) {
+        return {
+          type: 'success',
+          message: 'Pipeline finished execution successfully!',
+          icon: <CheckCircle size={20} color="#34d399" />
+        };
+      }
+      const hasError = statuses.some(s => s.state === 'error');
+      if (hasError) {
+        return {
+          type: 'error',
+          message: 'Pipeline completed with errors.',
+          icon: <XCircle size={20} color="#f87171" />
+        };
+      }
+    }
+
+    return null;
+  };
+
+  const pipelineStatus = getPipelineStatus();
+
   return (
     <div className="glass-panel dashboard-panel">
       <div className="app-header">
@@ -224,6 +265,13 @@ const Dashboard = ({ token, onLogout }) => {
           <LogOut size={16} /> Logout
         </button>
       </div>
+
+      {pipelineStatus && (
+        <div className={`pipeline-status-banner pipeline-status-${pipelineStatus.type}`}>
+          {pipelineStatus.icon}
+          <span>{pipelineStatus.message}</span>
+        </div>
+      )}
 
       <div 
         {...getRootProps()} 

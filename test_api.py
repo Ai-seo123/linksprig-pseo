@@ -1,3 +1,7 @@
+import warnings
+# Suppress warnings
+warnings.filterwarnings("ignore")
+
 import os
 import google.generativeai as genai
 from dotenv import load_dotenv

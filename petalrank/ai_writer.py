@@ -1,3 +1,7 @@
+import warnings
+# Suppress google.generativeai and other Future/Deprecation warnings before import
+warnings.filterwarnings("ignore")
+
 import os
 import json
 import re
