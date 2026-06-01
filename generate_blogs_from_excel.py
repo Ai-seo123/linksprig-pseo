@@ -265,6 +265,24 @@ def push_post_to_wordpress(page, keyword):
     if cat_id:
         payload["categories"] = [cat_id]
     
+    # Check if post already exists on WordPress API by slug
+    post_slug = page.get("slug")
+    if post_slug:
+        try:
+            check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
+            check_resp = requests.get(
+                check_endpoint,
+                params={"slug": post_slug, "status": "any"},
+                auth=(WP_USER, WP_APP_PASSWORD),
+                headers=headers,
+                timeout=10
+            )
+            if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
+                print(f" - [Skipping] Slug already exists on WordPress: {post_slug}")
+                return True
+        except Exception as e:
+            print(f" - [Warning] Error checking if slug '{post_slug}' exists on WP: {e}")
+            
     max_retries = 3
     backoff_factor = 2
     

@@ -151,18 +151,18 @@ def push_csv_to_wp():
     
     with open(csv_path, mode='r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
-        headers = reader.fieldnames
+        csv_headers = reader.fieldnames
         rows = list(reader)
         
     print(f"[INFO] Found {len(rows)} entries in CSV.")
     
     # Validate required headers
     required_headers = ["post_title", "post_slug", "post_content"]
-    if headers is not None:
-        missing_headers = [h for h in required_headers if h not in headers]
+    if csv_headers is not None:
+        missing_headers = [h for h in required_headers if h not in csv_headers]
         if missing_headers:
             print(f"[ERROR] CSV file is missing required columns: {', '.join(missing_headers)}")
-            print(f"[INFO] Found columns: {', '.join(headers)}")
+            print(f"[INFO] Found columns: {', '.join(csv_headers)}")
             exit(1)
     
     # Define CPT field mappings
@@ -177,12 +177,40 @@ def push_csv_to_wp():
     for idx, row in enumerate(rows):
         post_title = row.get("post_title")
         post_slug = row.get("post_slug")
+        
+        if not post_slug:
+            continue
+            
+        if post_slug in generated_slugs:
+            print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already in registry: {post_slug}")
+            continue
+            
         post_content = row.get("post_content")
         post_type = row.get("post_type") or "post"
         meta_title = row.get("meta_title")
         meta_description = row.get("meta_description")
         schema_json_str = row.get("schema_json", "{}")
         category = row.get("category", "")
+        
+        # Map CPTs or 'post' to correct endpoint slug
+        wp_endpoint = "posts" if post_type == "post" else post_type
+        
+        # Check if post already exists on WordPress API by slug
+        try:
+            check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}"
+            check_resp = requests.get(
+                check_endpoint,
+                params={"slug": post_slug, "status": "any"},
+                auth=(WP_USER, WP_APP_PASSWORD),
+                headers=headers,
+                timeout=10
+            )
+            if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
+                print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already exists on WordPress: {post_slug}")
+                successful_slugs.add(post_slug)
+                continue
+        except Exception as e:
+            print(f" - [Warning] Error checking if slug '{post_slug}' exists on WP: {e}")
         
         # Build ACF fields dynamic dictionary based on post_type
         acf_fields = {}
@@ -216,9 +244,6 @@ def push_csv_to_wp():
         max_retries = 3
         backoff_factor = 2
         success = False
-        
-        # Map CPTs or 'post' to correct endpoint slug
-        wp_endpoint = "posts" if post_type == "post" else post_type
         
         for attempt in range(max_retries):
             try:
