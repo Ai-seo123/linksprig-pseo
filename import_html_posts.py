@@ -13,6 +13,8 @@ import time
 # Load environment
 load_dotenv()
 
+import db_helper
+
 WP_URL = os.getenv("WP_URL", "")
 WP_USER = os.getenv("WP_USER", "")
 WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD", "")
@@ -137,9 +139,41 @@ def push_posts_to_wordpress(rows):
     b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
     headers["X-HTTP-Authorization"] = f"Basic {b64_auth}"
     
+    # Load registry from db_helper
+    try:
+        generated_slugs = db_helper.get_all_registered_slugs()
+    except Exception as e:
+        print(f"[WARNING] Failed to load registry: {e}")
+        generated_slugs = set()
+        
     successful_count = 0
     
     for idx, row in enumerate(rows):
+        post_slug = row.get("post_slug")
+        if post_slug in generated_slugs:
+            print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already in registry: {post_slug}")
+            continue
+            
+        # Check if post already exists on WordPress API by slug
+        if post_slug:
+            try:
+                check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
+                check_resp = requests.get(
+                    check_endpoint,
+                    params={"slug": post_slug, "status": "any"},
+                    auth=(WP_USER, WP_APP_PASSWORD),
+                    headers=headers,
+                    timeout=10
+                )
+                if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
+                    print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already exists on WordPress: {post_slug}")
+                    db_helper.register_slug(post_slug)
+                    continue
+            except Exception as e:
+                print(f" - [Warning] Error checking if slug '{post_slug}' exists on WP: {e}")
+                # Resilient WP API Check: Safely skip this post instead of uploading duplicate
+                print(f" - [Skipping {idx+1}/{len(rows)}] Skipping '{post_slug}' due to WP check error to prevent duplication.")
+                continue
         cat_name = row.get("category", "")
         cat_id = get_wp_category_id(cat_name, WP_URL, WP_USER, WP_APP_PASSWORD) if cat_name else None
         
@@ -177,6 +211,8 @@ def push_posts_to_wordpress(rows):
                 
                 if response.status_code == 201:
                     print(f" - [Success] Post draft created: '{row['post_title']}'")
+                    # Incrementally save successful slug
+                    db_helper.register_slug(post_slug)
                     successful_count += 1
                     success = True
                     break
@@ -293,6 +329,11 @@ def main():
     # Push directly to WordPress if configured
     if EXPORT_MODE in ["wp_api", "both"] and WP_URL and WP_USER and WP_APP_PASSWORD:
         push_posts_to_wordpress(rows)
+    else:
+        # If CSV only, register incrementally immediately
+        for row in rows:
+            db_helper.register_slug(row["post_slug"])
+        print("\n[INFO] Successful uploads registered incrementally in database/registry.")
 
 if __name__ == "__main__":
     main()

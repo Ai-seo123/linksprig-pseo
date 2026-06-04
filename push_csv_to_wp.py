@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 # Load environment
 load_dotenv()
 
+import db_helper
 import re
 
 WP_URL = os.getenv("WP_URL", "")
@@ -138,16 +139,12 @@ def push_csv_to_wp():
     b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
     headers["X-HTTP-Authorization"] = f"Basic {b64_auth}"
     
-    # Load registry to update it with successful pushes
-    generated_slugs = set()
-    if os.path.exists(registry_path):
-        try:
-            with open(registry_path, "r", encoding="utf-8") as f:
-                generated_slugs = set(json.load(f))
-        except Exception as e:
-            print(f"[WARNING] Failed to load registry file: {e}")
-
-    successful_slugs = set()
+    # Load registry from db_helper
+    try:
+        generated_slugs = db_helper.get_all_registered_slugs()
+    except Exception as e:
+        print(f"[WARNING] Failed to load registry from database: {e}")
+        generated_slugs = set()
     
     with open(csv_path, mode='r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
@@ -207,10 +204,14 @@ def push_csv_to_wp():
             )
             if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
                 print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already exists on WordPress: {post_slug}")
-                successful_slugs.add(post_slug)
+                # Register incrementally in db since it exists in WP
+                db_helper.register_slug(post_slug)
                 continue
         except Exception as e:
             print(f" - [Warning] Error checking if slug '{post_slug}' exists on WP: {e}")
+            # Resilient WP API Check: Safely skip this post instead of uploading duplicate
+            print(f" - [Skipping {idx+1}/{len(rows)}] Skipping '{post_slug}' due to WP check error to prevent duplication.")
+            continue
         
         # Build ACF fields dynamic dictionary based on post_type
         acf_fields = {}
@@ -258,7 +259,8 @@ def push_csv_to_wp():
                 
                 if response.status_code == 201:
                     print(f" - [Success] Draft created: '{post_title}'")
-                    successful_slugs.add(post_slug)
+                    # Incrementally save successful slug
+                    db_helper.register_slug(post_slug)
                     success = True
                     break
                 elif response.status_code == 404:
@@ -283,16 +285,7 @@ def push_csv_to_wp():
         if not success:
             print(f" - [FAILED] Could not push '{post_title}' to WordPress.")
             
-    # Save the successful slugs to the registry
-    if successful_slugs:
-        for slug in successful_slugs:
-            generated_slugs.add(slug)
-        try:
-            with open(registry_path, "w", encoding="utf-8") as f:
-                json.dump(list(generated_slugs), f, indent=2)
-            print(f"\n[INFO] Registry updated with {len(successful_slugs)} new successful uploads.")
-        except Exception as e:
-            print(f"[WARNING] Failed to save registry file: {e}")
+    print("\n[INFO] Successful uploads registered incrementally.")
             
     print("\n[SUCCESS] Push operation finished.")
 

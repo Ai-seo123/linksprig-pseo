@@ -16,6 +16,8 @@ from formatter import format_blog_html
 # Load environment
 load_dotenv()
 
+import db_helper
+
 API_KEY = os.getenv("GEMINI_API_KEY")
 WP_URL = os.getenv("WP_URL", "")
 WP_USER = os.getenv("WP_USER", "")
@@ -279,9 +281,14 @@ def push_post_to_wordpress(page, keyword):
             )
             if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
                 print(f" - [Skipping] Slug already exists on WordPress: {post_slug}")
+                # Register incrementally in db since it exists in WP
+                db_helper.register_slug(post_slug)
                 return True
         except Exception as e:
             print(f" - [Warning] Error checking if slug '{post_slug}' exists on WP: {e}")
+            # Resilient WP API Check: Safely skip this post instead of uploading duplicate
+            print(f" - [Skipping] Skipping '{post_slug}' due to WP check error to prevent duplication.")
+            return False
             
     max_retries = 3
     backoff_factor = 2
@@ -299,6 +306,8 @@ def push_post_to_wordpress(page, keyword):
             
             if response.status_code == 201:
                 print(f" - [Success] WordPress Draft created: '{page['title']}'")
+                # Incrementally save successful slug
+                db_helper.register_slug(page["slug"])
                 return True
             else:
                 print(f" - [Error] Failed to upload: {response.status_code} - {response.text}")
@@ -339,14 +348,12 @@ def main():
     
     print(f"[INFO] Found {len(df)} topics in Excel sheet.")
     
-    # Load registry to skip already generated pages
-    generated_slugs = set()
-    if os.path.exists(registry_path):
-        try:
-            with open(registry_path, "r", encoding="utf-8") as f:
-                generated_slugs = set(json.load(f))
-        except Exception as e:
-            print(f"[WARNING] Failed to load registry file: {e}")
+    # Load registry from db_helper
+    try:
+        generated_slugs = db_helper.get_all_registered_slugs()
+    except Exception as e:
+        print(f"[WARNING] Failed to load registry: {e}")
+        generated_slugs = set()
             
     rows_for_csv = []
     successful_slugs = set()
@@ -394,12 +401,10 @@ def main():
         
         # Upload directly to WordPress
         if EXPORT_MODE in ["wp_api", "both"]:
-            success = push_post_to_wordpress(page_data, keyword)
-            if success:
-                successful_slugs.add(page_data["slug"])
+            push_post_to_wordpress(page_data, keyword)
         else:
-            # If CSV only, immediately count as success
-            successful_slugs.add(page_data["slug"])
+            # If CSV only, immediately register incrementally
+            db_helper.register_slug(page_data["slug"])
             
         # Add a delay between API calls to prevent rate limits
         time.sleep(1)
@@ -414,16 +419,7 @@ def main():
             out_df.to_csv(csv_output_path, index=False, encoding="utf-8")
         print(f"[SUCCESS] CSV Export appended at: {csv_output_path}")
         
-    # Update registry with successful uploads
-    if successful_slugs:
-        for s in successful_slugs:
-            generated_slugs.add(s)
-        try:
-            with open(registry_path, "w", encoding="utf-8") as f:
-                json.dump(list(generated_slugs), f, indent=2)
-            print(f"[INFO] Registry updated with {len(successful_slugs)} new uploads.")
-        except Exception as e:
-            print(f"[WARNING] Failed to save registry: {e}")
+    print("\n[INFO] Successful uploads registered incrementally.")
             
     print("\n[SUCCESS] Pipeline execution finished.")
 

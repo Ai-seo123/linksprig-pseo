@@ -1,7 +1,12 @@
 import os
+import sys
 import shutil
 import subprocess
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, BackgroundTasks
+
+# Add parent directory to path so db_helper can be imported
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import db_helper
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -42,8 +47,9 @@ def login(request: LoginRequest):
     access_token = create_access_token(data={"sub": "admin"})
     return {"token": access_token}
 
-# In-memory store for background job statuses
-jobs_status = {}  # filename -> {"status": "queued" | "processing" | "completed" | "failed", "error": str | None}
+@app.on_event("startup")
+def startup_event():
+    db_helper.clean_stale_jobs()
 
 def process_uploaded_file(file_path: str, filename: str):
     """Background task to run the appropriate script based on file type"""
@@ -58,12 +64,12 @@ def process_uploaded_file(file_path: str, filename: str):
         script_to_run = "generate_blogs_from_excel.py"
         
     if not script_to_run:
-        jobs_status[filename] = {"status": "failed", "error": f"Unsupported file extension: {ext}"}
+        db_helper.update_job_status(filename, "failed", f"Unsupported file extension: {ext}")
         print(f"Unsupported file extension: {ext}")
         return
 
     # Update job state to processing
-    jobs_status[filename] = {"status": "processing", "error": None}
+    db_helper.update_job_status(filename, "processing")
 
     # Find where the script is located relative to main.py
     backend_dir = os.path.dirname(os.path.abspath(__file__))
@@ -88,7 +94,7 @@ def process_uploaded_file(file_path: str, filename: str):
                 text=True,
                 check=True
             )
-            jobs_status[filename] = {"status": "completed", "error": None}
+            db_helper.update_job_status(filename, "completed")
             print(f"Successfully processed {filename} with {script_to_run}")
         except subprocess.CalledProcessError as e:
             err_output = (e.stderr or "").strip()
@@ -100,15 +106,15 @@ def process_uploaded_file(file_path: str, filename: str):
             else:
                 if len(error_details) > 400:
                     error_details = "..." + error_details[-397:]
-            jobs_status[filename] = {"status": "failed", "error": error_details}
+            db_helper.update_job_status(filename, "failed", error_details)
             print(f"Error executing {script_to_run}: {e}")
             if e.stderr:
                 print(f"Stderr:\n{e.stderr}")
         except Exception as e:
-            jobs_status[filename] = {"status": "failed", "error": str(e)}
+            db_helper.update_job_status(filename, "failed", str(e))
             print(f"Error executing {script_to_run}: {e}")
     else:
-        jobs_status[filename] = {"status": "failed", "error": "Script missing on server"}
+        db_helper.update_job_status(filename, "failed", "Script missing on server")
         print(f"Script missing at: {script_path}")
 
 
@@ -124,6 +130,14 @@ async def upload_file(
     if ext not in valid_extensions:
         raise HTTPException(status_code=400, detail="Unsupported file format")
 
+    # Lock Check: check if there is an active job running for this filename
+    existing_job = db_helper.get_job_status(file.filename)
+    if existing_job and existing_job.get("status") in ["queued", "processing"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A job for '{file.filename}' is already running (status: {existing_job.get('status')}). Please wait until it completes."
+        )
+
     # Save the file temporarily
     backend_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(backend_dir)
@@ -135,14 +149,14 @@ async def upload_file(
         shutil.copyfileobj(file.file, buffer)
         
     # Set initial job status and dispatch background processing task
-    jobs_status[file.filename] = {"status": "queued", "error": None}
+    db_helper.update_job_status(file.filename, "queued")
     background_tasks.add_task(process_uploaded_file, file_path, file.filename)
     
     return {"message": "File uploaded and queued for processing", "filename": file.filename}
 
 @app.get("/api/jobs")
 def get_jobs_status(username: str = Depends(get_current_user)):
-    return jobs_status
+    return db_helper.get_all_jobs()
 
 @app.get("/api/health")
 def health_check():
