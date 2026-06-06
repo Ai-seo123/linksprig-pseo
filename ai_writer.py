@@ -27,7 +27,7 @@ def clean_slug(text):
 
 class AIWriter:
     def __init__(self):
-        self.model_name = "gemini-3.5-flash"
+        self.model_name = "gemini-2.5-flash-lite"
         self.use_mock = not bool(API_KEY)
 
     def generate_content(self, post_type, entity_data):
