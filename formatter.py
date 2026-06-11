@@ -283,10 +283,26 @@ CSS_STYLES = """
 </style>
 """
 
-def build_layout_html(title, toc_list_html, body_content_html):
+def build_layout_html(title, toc_list_html, body_content_html, meta_title=None, meta_description=None, focus_keyword=None):
     """Wrapper template for building the 3-column post content."""
-    return f"""{CSS_STYLES}
-<div class="linksprig-blog-container">
+    head_html = ""
+    if meta_title or meta_description or focus_keyword:
+        head_html = f"""<head>
+  <meta charset="UTF-8">
+  <title>{meta_title or title}</title>
+  <meta name="description" content="{meta_description or ''}">
+  <meta name="keywords" content="{focus_keyword or ''}">
+  {CSS_STYLES}
+</head>
+"""
+    else:
+        head_html = CSS_STYLES
+
+    body_open = "<body>\n" if head_html.startswith("<head>") else ""
+    body_close = "\n</body>" if head_html.startswith("<head>") else ""
+
+    return f"""{head_html}
+{body_open}<div class="linksprig-blog-container">
   <!-- Left Sidebar (Table of Contents) -->
   <aside class="linksprig-toc-sidebar">
     <nav class="linksprig-toc-wrapper">
@@ -310,10 +326,10 @@ def build_layout_html(title, toc_list_html, body_content_html):
       <a href="https://linksprig.com/signup" class="cta-card-button">Get Started Free</a>
     </div>
   </aside>
-</div>
+</div>{body_close}
 """
 
-def format_blog_html(title, intro_html, body_sections, faqs_list=None):
+def format_blog_html(title, intro_html, body_sections, faqs_list=None, meta_title=None, meta_description=None, focus_keyword=None):
     """Formats structured blog content (from generator/excel pipelines)."""
     toc_items = []
     
@@ -348,7 +364,7 @@ def format_blog_html(title, intro_html, body_sections, faqs_list=None):
       {intro_html}
     </div>{sections_html}{faq_html}"""
     
-    return build_layout_html(title, toc_list_html, body_content_html)
+    return build_layout_html(title, toc_list_html, body_content_html, meta_title, meta_description, focus_keyword)
 
 def format_imported_blog_html(title, flat_body_html):
     """Formats flat body HTML (from imported WordPress HTML posts)."""
