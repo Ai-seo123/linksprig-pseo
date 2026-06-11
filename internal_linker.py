@@ -33,16 +33,16 @@ class InternalLinker:
 
         # Rule matching setup
         target_types = []
-        if post_type == "compare":
-            target_types = ["pricing", "demo"]
-        elif post_type == "industry":
-            target_types = ["use_case"]
-        elif post_type == "problem":
-            target_types = ["guide"]
-        elif post_type == "guide":
-            target_types = ["compare", "use_case"]
+        if post_type in ["compare", "copywriting", "templates"]:
+            target_types = ["pricing", "demo", "strategy", "guide"]
+        elif post_type in ["industry", "lead_gen", "advanced"]:
+            target_types = ["use_case", "strategy", "technology", "guide"]
+        elif post_type in ["problem", "technology"]:
+            target_types = ["guide", "strategy", "copywriting"]
+        elif post_type in ["guide", "strategy", "role_persona"]:
+            target_types = ["compare", "use_case", "copywriting", "templates", "technology", "lead_gen", "guide"]
         elif post_type == "use_case":
-            target_types = ["signup"]
+            target_types = ["signup", "strategy", "guide"]
 
         # 1. Contextual inline injection
         for section in body_sections:

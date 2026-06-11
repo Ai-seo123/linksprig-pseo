@@ -12,6 +12,7 @@ import pandas as pd
 import google.generativeai as genai
 from dotenv import load_dotenv
 from formatter import format_blog_html
+from internal_linker import InternalLinker
 
 # Load environment
 load_dotenv()
@@ -252,9 +253,12 @@ def push_post_to_wordpress(page, keyword):
     cat_name = page.get("category", "")
     cat_id = get_wp_category_id(cat_name, WP_URL, WP_USER, WP_APP_PASSWORD) if cat_name else None
     
+    # Clean slug for WP payload (take leaf node)
+    wp_slug = page["slug"].strip("/").split("/")[-1] if "/" in page["slug"] else page["slug"]
+    
     payload = {
         "title": page["title"],
-        "slug": page["slug"],
+        "slug": wp_slug,
         "content": content_html,
         "status": WP_POST_STATUS,
         "type": "post",
@@ -274,13 +278,13 @@ def push_post_to_wordpress(page, keyword):
             check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
             check_resp = requests.get(
                 check_endpoint,
-                params={"slug": post_slug, "status": "any"},
+                params={"slug": wp_slug, "status": "any"},
                 auth=(WP_USER, WP_APP_PASSWORD),
                 headers=headers,
                 timeout=10
             )
             if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
-                print(f" - [Skipping] Slug already exists on WordPress: {post_slug}")
+                print(f" - [Skipping] Slug already exists on WordPress: {post_slug} (WP check: {wp_slug})")
                 # Register incrementally in db since it exists in WP
                 db_helper.register_slug(post_slug)
                 return True
@@ -321,11 +325,11 @@ def push_post_to_wordpress(page, keyword):
             sleep_time = backoff_factor ** attempt
             time.sleep(sleep_time)
             
-    return False
-
 def main():
-    excel_path = os.getenv("UPLOADED_FILE_PATH", r"C:\Users\ARNAV\Downloads\LinkSprig-Blogs-Topics-Keywords-22ndMay'26.xlsx")
-    registry_path = os.path.join("output", "generated_registry.json")
+    excel_path = os.getenv("UPLOADED_FILE_PATH", r"C:\Users\ARNAV\Downloads\LinkSprig-Blogs-Topics-Keywords-22ndMay'26 1.xlsx")
+    if not os.path.exists(excel_path):
+        excel_path = r"C:\Users\ARNAV\Downloads\LinkSprig-Blogs-Topics-Keywords-22ndMay'26.xlsx"
+        
     csv_output_path = os.path.join("output", "excel_blogs_export.csv")
     
     if not os.path.exists(excel_path):
@@ -333,21 +337,115 @@ def main():
         return
         
     print(f"[INFO] Reading topics from {excel_path}...")
-    df = pd.read_excel(excel_path)
+    try:
+        xl = pd.ExcelFile(excel_path)
+    except Exception as e:
+        print(f"[ERROR] Failed to open excel file: {e}")
+        return
+
+    all_pages = []
     
-    # Strip whitespace from column names
-    df.columns = [c.strip() for c in df.columns]
+    for sheet_name in xl.sheet_names:
+        if sheet_name not in ["26thmay'26", "28thmay'26", "6thJune'26"]:
+            print(f"[INFO] Skipping unrecognized sheet: {sheet_name}")
+            continue
+            
+        print(f"[INFO] Parsing sheet: {sheet_name}...")
+        df = xl.parse(sheet_name)
+        
+        current_category = "General"
+        
+        for idx, row in df.iterrows():
+            row_vals = [str(val).strip() if pd.notna(val) else "" for val in row]
+            
+            # Check if this row is empty
+            if not any(row_vals):
+                continue
+                
+            # Check if this row is a category header (e.g. "Category A ...")
+            non_empty_vals = [val for val in row_vals if val]
+            if len(non_empty_vals) == 1 and ("category" in non_empty_vals[0].lower()):
+                current_category = non_empty_vals[0]
+                print(f" - [Category] Found Category Header: {current_category}")
+                continue
+            
+            keyword = ""
+            topic = ""
+            slug = ""
+            
+            if sheet_name == "26thmay'26":
+                if len(row_vals) >= 3:
+                    keyword = row_vals[1]
+                    topic = row_vals[2]
+                    slug = "/" + clean_slug(topic) + "/"
+            elif sheet_name == "28thmay'26":
+                if len(row_vals) >= 4:
+                    keyword = row_vals[1]
+                    topic = row_vals[2]
+                    slug = row_vals[3]
+            elif sheet_name == "6thJune'26":
+                if len(row_vals) >= 3:
+                    keyword = row_vals[0]
+                    topic = row_vals[1]
+                    slug = row_vals[2]
+            
+            # Skip header repeats or invalid rows
+            if not topic or not keyword or "keyword" in keyword.lower() or "topic" in topic.lower() or "category" in keyword.lower():
+                continue
+                
+            # Clean slug path to preserve folders but remove malformed strings
+            if slug:
+                slug_match = re.search(r'/[a-z0-9_-]+(?:/[a-z0-9_-]+)*/?', slug.lower())
+                if slug_match:
+                    slug = slug_match.group(0)
+                else:
+                    slug = "/" + clean_slug(slug) + "/"
+            else:
+                slug = "/" + clean_slug(topic) + "/"
+                
+            if not slug.startswith("/"):
+                slug = "/" + slug
+            if not slug.endswith("/"):
+                slug = slug + "/"
+                
+            all_pages.append({
+                "sheet": sheet_name,
+                "category": current_category,
+                "keyword": keyword,
+                "title": topic,
+                "slug": slug
+            })
+
+    print(f"[INFO] Parsed {len(all_pages)} total pages from Excel.")
     
-    # Drop rows that don't have topics
-    if "Topics" in df.columns:
-        df = df.dropna(subset=["Topics"])
-    else:
-        print("[ERROR] 'Topics' column not found in Excel sheet.")
-        print(f"[INFO] Found columns: {', '.join(df.columns)}")
-        exit(1)
-    
-    print(f"[INFO] Found {len(df)} topics in Excel sheet.")
-    
+    if not all_pages:
+        print("[WARNING] No topics parsed. Exiting.")
+        return
+
+    # Map categories to internal linker types
+    POST_TYPE_MAP = {
+        "Category A — LinkedIn Outreach Strategy": "strategy",
+        "Category B — AI Personalization & Technology": "technology",
+        "Category C — Role-Specific Outreach Guides": "guide",
+        "Category D — Message Templates & Copywriting": "copywriting",
+        "Category E — Lead Generation & Pipeline Building": "lead_gen"
+    }
+
+    # Register pages in the InternalLinker
+    registered_pages = []
+    for p in all_pages:
+        norm_cat = normalize_category(p["category"])
+        p_type = POST_TYPE_MAP.get(norm_cat, "guide")
+        registered_pages.append({
+            "post_type": p_type,
+            "slug": p["slug"],
+            "title": p["title"],
+            "entity": p["keyword"]
+        })
+        
+    linker = InternalLinker(registered_pages)
+    print(f"[INFO] Initialized InternalLinker with {len(registered_pages)} registered pages.")
+
     # Load registry from db_helper
     try:
         generated_slugs = db_helper.get_all_registered_slugs()
@@ -356,18 +454,16 @@ def main():
         generated_slugs = set()
             
     rows_for_csv = []
-    successful_slugs = set()
     
-    for idx, row in df.iterrows():
-        topic = str(row["Topics"]).strip() if row.get("Topics") is not None else ""
-        if not topic or topic.lower() == 'nan':
-            continue
-        keyword = str(row["Keyword"]).strip() if "Keyword" in df.columns and row.get("Keyword") is not None else ""
+    for idx, page in enumerate(all_pages):
+        topic = page["title"]
+        keyword = page["keyword"]
+        slug = page["slug"]
         
         # Check if already generated
-        slug_check = clean_slug(topic)
-        if f"/blog/{slug_check}" in generated_slugs or slug_check in generated_slugs:
-            print(f"[{idx+1}/{len(df)}] Skipping already generated topic: {topic}")
+        leaf_slug = slug.strip("/").split("/")[-1]
+        if slug in generated_slugs or leaf_slug in generated_slugs or f"/blog/{leaf_slug}" in generated_slugs:
+            print(f"[{idx+1}/{len(all_pages)}] Skipping already generated topic: {topic}")
             continue
             
         page_data = generate_blog_post(topic, keyword)
@@ -378,6 +474,17 @@ def main():
             print(f"[FATAL] Halting pipeline due to AI API error on topic '{topic}'.")
             exit(1)
             
+        # Overwrite page parameters with values from Excel
+        page_data["category"] = normalize_category(page["category"]) or page_data.get("category", "")
+        page_data["slug"] = slug # Keep the prefix slug for internal linking resolution
+        
+        # Inject context-aware internal links
+        norm_cat = normalize_category(page["category"])
+        p_type = POST_TYPE_MAP.get(norm_cat, "guide")
+        injected_sections, links_count = linker.inject_links(p_type, page_data["body_sections"])
+        page_data["body_sections"] = injected_sections
+        print(f" - [Internal Links] Injected {links_count} links.")
+        
         # Flatten content HTML for CSV export with Table of Contents layout
         content_html = format_blog_html(
             title=page_data["title"],
@@ -420,7 +527,6 @@ def main():
         print(f"[SUCCESS] CSV Export appended at: {csv_output_path}")
         
     print("\n[INFO] Successful uploads registered incrementally.")
-            
     print("\n[SUCCESS] Pipeline execution finished.")
 
 if __name__ == "__main__":
