@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend
 
 # Copy the automation scripts that the backend runs in background tasks
-COPY import_html_posts.py ai_writer.py generate_blogs_from_excel.py generator.py internal_linker.py push_csv_to_wp.py qa_validator.py formatter.py db_helper.py ./
+COPY import_html_posts.py ai_writer.py generate_blogs_from_excel.py generator.py internal_linker.py push_csv_to_wp.py qa_validator.py formatter.py db_helper.py generate_blogs_from_json.py ./
 
 COPY database/ ./database
 COPY wp-import/ ./wp-import
