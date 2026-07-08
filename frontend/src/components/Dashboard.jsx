@@ -1,15 +1,142 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { UploadCloud, CheckCircle, XCircle, LogOut, Loader2 } from 'lucide-react';
+import { UploadCloud, CheckCircle, XCircle, LogOut, Loader2, Sparkles, Download, Send } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL !== undefined && import.meta.env.VITE_API_URL !== ''
   ? import.meta.env.VITE_API_URL 
   : (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8000' : '');
 
 const Dashboard = ({ token, onLogout }) => {
+  const [activeTab, setActiveTab] = useState('pipeline'); // 'pipeline' or 'ideas'
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [statusMap, setStatusMap] = useState({});
+
+  // Idea Generation state
+  const [promptText, setPromptText] = useState('');
+  const [ideas, setIdeas] = useState([]);
+  const [generating, setGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState('');
+  const [importing, setImporting] = useState(false);
+
+  const generateTopics = async () => {
+    if (!promptText.trim()) return;
+    setGenerating(true);
+    setGenerationError('');
+    setIdeas([]);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/generate-topics`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ prompt: promptText })
+      });
+
+      if (response.status === 401) {
+        onLogout();
+        return;
+      }
+
+      const data = await response.json();
+      if (response.ok) {
+        setIdeas(data.topics || []);
+      } else {
+        setGenerationError(data.detail || 'Failed to generate topics.');
+      }
+    } catch (err) {
+      setGenerationError('Network error while generating topics.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const exportToCSV = () => {
+    if (ideas.length === 0) return;
+    
+    const headers = ['Keyword', 'Topic', 'Category'];
+    const rows = ideas.map(idea => [
+      `"${(idea.keyword || '').replace(/"/g, '""')}"`,
+      `"${(idea.topic || '').replace(/"/g, '""')}"`,
+      `"${(idea.category || '').replace(/"/g, '""')}"`
+    ]);
+    
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    
+    const cleanPrompt = promptText.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
+    link.setAttribute('download', `generated-topics-${cleanPrompt || 'seo'}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const importToPipeline = async () => {
+    if (ideas.length === 0) return;
+    setImporting(true);
+
+    const jsonContent = JSON.stringify(ideas, null, 2);
+    const blob = new Blob([jsonContent], { type: 'application/json' });
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const fileName = `generated-topics-${timestamp}.json`;
+    const file = new File([blob], fileName, { type: 'application/json' });
+
+    setFiles(prev => {
+      const existingNames = new Set(prev.map(f => f.name));
+      if (existingNames.has(fileName)) return prev;
+      return [...prev, file];
+    });
+
+    setStatusMap(prev => ({
+      ...prev,
+      [fileName]: { state: 'uploading', message: 'Uploading to server...' }
+    }));
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/upload`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      if (response.status === 401) {
+        onLogout();
+        return;
+      }
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setStatusMap(prev => ({
+          ...prev,
+          [fileName]: { state: 'queued', message: 'Queued for processing' }
+        }));
+        setActiveTab('pipeline');
+      } else {
+        setStatusMap(prev => ({
+          ...prev,
+          [fileName]: { state: 'error', message: data.detail || 'Upload failed' }
+        }));
+      }
+    } catch (err) {
+      setStatusMap(prev => ({
+        ...prev,
+        [fileName]: { state: 'error', message: 'Network error' }
+      }));
+    } finally {
+      setImporting(false);
+    }
+  };
 
   // Fetch existing background jobs on mount
   useEffect(() => {
@@ -273,71 +400,171 @@ const Dashboard = ({ token, onLogout }) => {
         </div>
       )}
 
-      <div 
-        {...getRootProps()} 
-        className={`dropzone ${isDragActive ? 'active' : ''}`}
-      >
-        <input {...getInputProps()} />
-        <UploadCloud size={48} className="drop-icon" />
-        {isDragActive ? (
-          <p>Drop the files here ...</p>
-        ) : (
-          <p>Drag and drop HTML, CSV, or Excel files here, or click to select files</p>
-        )}
+      <div className="tabs-container">
+        <button 
+          onClick={() => setActiveTab('pipeline')} 
+          className={`tab-btn ${activeTab === 'pipeline' ? 'active' : ''}`}
+        >
+          WordPress Pipeline
+        </button>
+        <button 
+          onClick={() => setActiveTab('ideas')} 
+          className={`tab-btn ${activeTab === 'ideas' ? 'active' : ''}`}
+        >
+          Topic Generator
+        </button>
       </div>
 
-      {files.length > 0 && (
-        <div style={{ marginBottom: '2rem' }}>
-          <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>Queued Files</h3>
-          <ul className="file-list">
-            {files.map(file => {
-              const status = statusMap[file.name] || {};
-              const badgeClass = status.state === 'uploading' || status.state === 'queued' 
-                ? 'pending' 
-                : status.state;
-              return (
-                <li key={file.name} className="file-item">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                    <span style={{ fontWeight: 500 }}>{file.name}</span>
-                    <span className={`status-badge status-${badgeClass}`}>
-                      {status.message}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    {status.state !== 'uploading' && status.state !== 'queued' && status.state !== 'processing' && (
-                      <button 
-                        onClick={() => removeFile(file.name)}
-                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                      >
-                        <XCircle size={20} />
-                      </button>
-                    )}
-                    {status.state === 'success' && <CheckCircle size={20} color="#10b981" />}
-                    {status.state === 'processing' && <Loader2 className="animate-spin" size={20} color="#fbbf24" />}
-                    {status.state === 'queued' && <Loader2 className="animate-pulse" size={20} color="#818cf8" />}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+      {activeTab === 'pipeline' ? (
+        <>
+          <div 
+            {...getRootProps()} 
+            className={`dropzone ${isDragActive ? 'active' : ''}`}
+          >
+            <input {...getInputProps()} />
+            <UploadCloud size={48} className="drop-icon" />
+            {isDragActive ? (
+              <p>Drop the files here ...</p>
+            ) : (
+              <p>Drag and drop HTML, CSV, or Excel files here, or click to select files</p>
+            )}
+          </div>
+
+          {files.length > 0 && (
+            <div style={{ marginBottom: '2rem' }}>
+              <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>Queued Files</h3>
+              <ul className="file-list">
+                {files.map(file => {
+                  const status = statusMap[file.name] || {};
+                  const badgeClass = status.state === 'uploading' || status.state === 'queued' 
+                    ? 'pending' 
+                    : status.state;
+                  return (
+                    <li key={file.name} className="file-item">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <span style={{ fontWeight: 500 }}>{file.name}</span>
+                        <span className={`status-badge status-${badgeClass}`}>
+                          {status.message}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        {status.state !== 'uploading' && status.state !== 'queued' && status.state !== 'processing' && (
+                          <button 
+                            onClick={() => removeFile(file.name)}
+                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                          >
+                            <XCircle size={20} />
+                          </button>
+                        )}
+                        {status.state === 'success' && <CheckCircle size={20} color="#10b981" />}
+                        {status.state === 'processing' && <Loader2 className="animate-spin" size={20} color="#fbbf24" />}
+                        {status.state === 'queued' && <Loader2 className="animate-pulse" size={20} color="#818cf8" />}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          <button 
+            className="primary-btn" 
+            onClick={processUpload}
+            disabled={
+              uploading || 
+              files.length === 0 || 
+              files.every(f => {
+                const st = statusMap[f.name]?.state;
+                return st === 'success' || st === 'queued' || st === 'processing';
+              })
+            }
+          >
+            {uploading ? <Loader2 className="animate-spin" size={20} /> : <UploadCloud size={20} />}
+            {uploading ? 'Processing...' : 'Upload and Process Queue'}
+          </button>
+        </>
+      ) : (
+        <div className="ideas-panel">
+          <div className="prompt-container">
+            <label htmlFor="prompt-input" style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-secondary)' }}>
+              Enter a prompt to generate keywords and topics
+            </label>
+            <textarea
+              id="prompt-input"
+              className="prompt-textarea"
+              placeholder="e.g. Give me 5 ideas for LinkedIn outreach strategy guides targeting sales executives"
+              value={promptText}
+              onChange={(e) => setPromptText(e.target.value)}
+              disabled={generating || importing}
+            />
+          </div>
+
+          {generationError && (
+            <div className="pipeline-status-banner pipeline-status-error" style={{ marginTop: 0 }}>
+              <XCircle size={20} color="#f87171" />
+              <span>{generationError}</span>
+            </div>
+          )}
+
+          <button
+            className="primary-btn"
+            onClick={generateTopics}
+            disabled={generating || importing || !promptText.trim()}
+          >
+            {generating ? <Loader2 className="animate-spin" size={20} /> : <Sparkles size={20} />}
+            {generating ? 'Generating Ideas...' : 'Generate Keywords & Topics'}
+          </button>
+
+          {ideas.length > 0 && (
+            <div style={{ marginTop: '2rem' }}>
+              <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>Generated Ideas</h3>
+              <div className="table-container">
+                <table className="ideas-table">
+                  <thead>
+                    <tr>
+                      <th>Keyword</th>
+                      <th>Topic / Title</th>
+                      <th>Category</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ideas.map((idea, index) => (
+                      <tr key={index}>
+                        <td style={{ fontWeight: 600 }}>{idea.keyword}</td>
+                        <td>{idea.topic}</td>
+                        <td>
+                          <span className="status-badge status-success" style={{ textTransform: 'none', background: 'rgba(99, 102, 241, 0.1)', color: '#a5b4fc', border: '1px solid rgba(99, 102, 241, 0.3)' }}>
+                            {idea.category}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="action-bar">
+                <button
+                  className="secondary-btn"
+                  onClick={exportToCSV}
+                  disabled={importing}
+                >
+                  <Download size={18} /> Export to CSV
+                </button>
+                <button
+                  className="primary-btn"
+                  style={{ width: 'auto' }}
+                  onClick={importToPipeline}
+                  disabled={importing}
+                >
+                  {importing ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
+                  {importing ? 'Importing...' : 'Straight Import into Queue'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
-
-      <button 
-        className="primary-btn" 
-        onClick={processUpload}
-        disabled={
-          uploading || 
-          files.length === 0 || 
-          files.every(f => {
-            const st = statusMap[f.name]?.state;
-            return st === 'success' || st === 'queued' || st === 'processing';
-          })
-        }
-      >
-        {uploading ? <Loader2 className="animate-spin" size={20} /> : <UploadCloud size={20} />}
-        {uploading ? 'Processing...' : 'Upload and Process Queue'}
-      </button>
     </div>
   );
 };

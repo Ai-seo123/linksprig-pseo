@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from auth import verify_password, create_access_token, verify_captcha, get_current_user
 from config import ADMIN_PASSWORD_HASH
+from topic_generator import generate_topics
 
 app = FastAPI(title="LinkSprig API", version="1.0.0")
 
@@ -29,6 +30,9 @@ app.add_middleware(
 class LoginRequest(BaseModel):
     password: str
     captchaToken: str
+
+class GenerateTopicsRequest(BaseModel):
+    prompt: str
 
 @app.post("/login")
 def login(request: LoginRequest):
@@ -47,6 +51,14 @@ def login(request: LoginRequest):
     access_token = create_access_token(data={"sub": "admin"})
     return {"token": access_token}
 
+@app.post("/api/generate-topics")
+def api_generate_topics(request: GenerateTopicsRequest, username: str = Depends(get_current_user)):
+    try:
+        topics = generate_topics(request.prompt)
+        return {"topics": topics}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.on_event("startup")
 def startup_event():
     db_helper.clean_stale_jobs()
@@ -62,6 +74,8 @@ def process_uploaded_file(file_path: str, filename: str):
         script_to_run = "push_csv_to_wp.py"
     elif ext in ["xls", "xlsx"]:
         script_to_run = "generate_blogs_from_excel.py"
+    elif ext == "json":
+        script_to_run = "generate_blogs_from_json.py"
         
     if not script_to_run:
         db_helper.update_job_status(filename, "failed", f"Unsupported file extension: {ext}")
@@ -124,7 +138,7 @@ async def upload_file(
     file: UploadFile = File(...), 
     username: str = Depends(get_current_user)
 ):
-    valid_extensions = ["html", "csv", "xlsx", "xls"]
+    valid_extensions = ["html", "csv", "xlsx", "xls", "json"]
     ext = file.filename.split('.')[-1].lower()
     
     if ext not in valid_extensions:
