@@ -148,7 +148,8 @@ def generate_blog_post(topic, keyword):
         "   - Category B — AI Personalization & Technology\n"
         "   - Category C — Role-Specific Outreach Guides\n"
         "   - Category D — Message Templates & Copywriting\n"
-        "   - Category E — Lead Generation & Pipeline Building"
+        "   - Category E — Lead Generation & Pipeline Building\n"
+        "7. CRITICAL FOR JSON VALIDITY: Use single quotes for all HTML attributes (e.g. <a href='...'> or <span style='...'>) and avoid raw double quotes inside the text. If you must use double quotes, they MUST be escaped with a backslash (\\\")."
     )
     
     prompt = f"""
@@ -204,29 +205,41 @@ def generate_blog_post(topic, keyword):
         "required": ["title", "meta_title", "meta_description", "slug", "category", "intro", "body_sections", "faqs"]
     }
     
-    try:
-        model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash-lite",
-            system_instruction=system_instruction
-        )
-        
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "response_mime_type": "application/json",
-                "response_schema": response_schema,
-                "temperature": 0.7,
-                "max_output_tokens": 8192
-            }
-        )
-        
-        result = json.loads(response.text)
-        if not result.get("slug"):
-            result["slug"] = clean_slug(topic)
-        return result
-    except Exception as e:
-        print(f" - [Error] AI generation failed: {e}")
-        return {"error": str(e)}
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            model = genai.GenerativeModel(
+                model_name="gemini-2.5-flash-lite",
+                system_instruction=system_instruction
+            )
+            
+            response = model.generate_content(
+                prompt,
+                generation_config={
+                    "response_mime_type": "application/json",
+                    "response_schema": response_schema,
+                    "temperature": 0.7 + (attempt * 0.1),
+                    "max_output_tokens": 8192
+                }
+            )
+            
+            text = response.text.strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+            
+            result = json.loads(text)
+            if not result.get("slug"):
+                result["slug"] = clean_slug(topic)
+            return result
+        except Exception as e:
+            print(f" - [Attempt {attempt+1}/{max_retries}] AI generation failed: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2)
+            else:
+                return {"error": f"Failed after {max_retries} attempts. Last error: {str(e)}"}
 
 def push_post_to_wordpress(page, keyword):
     if not WP_URL or not WP_USER or not WP_APP_PASSWORD:

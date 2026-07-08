@@ -5,6 +5,7 @@ warnings.filterwarnings("ignore")
 import os
 import json
 import re
+import time
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -40,48 +41,59 @@ class AIWriter:
         
         prompt, system_instruction, response_schema = self._prepare_generation_context(post_type, entity_data)
         
-        try:
-            model = genai.GenerativeModel(
-                model_name=self.model_name,
-                system_instruction=system_instruction
-            )
-            
-            response = model.generate_content(
-                prompt,
-                generation_config={
-                    "response_mime_type": "application/json",
-                    "response_schema": response_schema,
-                    "temperature": 0.7,
-                    "max_output_tokens": 8192
-                }
-            )
-            
-            # Parse and return JSON
-            result = json.loads(response.text)
-            
-            # Ensure slug is generated if missing
-            if not result.get("slug"):
-                if post_type == "compare":
-                    result["slug"] = f"{clean_slug(entity_data['competitor'])}-vs-linksprig"
-                elif post_type == "industry":
-                    result["slug"] = f"link-building-software-for-{clean_slug(entity_data['industry'])}"
-                elif post_type == "problem":
-                    result["slug"] = f"how-to-fix-{clean_slug(entity_data['issue'])}"
-                elif post_type == "use_case":
-                    result["slug"] = f"{clean_slug(entity_data['use_case'])}-outreach-tool"
-                else:
-                    result["slug"] = clean_slug(entity_data['guide'])
-            
-            return result
-            
-        except Exception as e:
-            print(f"[ERROR] AI generation failed: {e}. Falling back to Mock data.")
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                if 'response' in locals() and hasattr(response, 'text'):
-                    print(f"[DEBUG] Raw response: {response.text[:2000]}")
-            except Exception as inner_e:
-                print(f"[DEBUG] Could not print raw response: {inner_e}")
-            return self._generate_mock_response(post_type, entity_data)
+                model = genai.GenerativeModel(
+                    model_name=self.model_name,
+                    system_instruction=system_instruction
+                )
+                
+                response = model.generate_content(
+                    prompt,
+                    generation_config={
+                        "response_mime_type": "application/json",
+                        "response_schema": response_schema,
+                        "temperature": 0.7 + (attempt * 0.1),
+                        "max_output_tokens": 8192
+                    }
+                )
+                
+                text = response.text.strip()
+                if text.startswith("```json"):
+                    text = text[7:]
+                if text.endswith("```"):
+                    text = text[:-3]
+                text = text.strip()
+                
+                result = json.loads(text)
+                
+                # Ensure slug is generated if missing
+                if not result.get("slug"):
+                    if post_type == "compare":
+                        result["slug"] = f"{clean_slug(entity_data['competitor'])}-vs-linksprig"
+                    elif post_type == "industry":
+                        result["slug"] = f"link-building-software-for-{clean_slug(entity_data['industry'])}"
+                    elif post_type == "problem":
+                        result["slug"] = f"how-to-fix-{clean_slug(entity_data['issue'])}"
+                    elif post_type == "use_case":
+                        result["slug"] = f"{clean_slug(entity_data['use_case'])}-outreach-tool"
+                    else:
+                        result["slug"] = clean_slug(entity_data['guide'])
+                
+                return result
+                
+            except Exception as e:
+                print(f"[ERROR] AI generation attempt {attempt+1}/{max_retries} failed: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                else:
+                    try:
+                        if 'response' in locals() and hasattr(response, 'text'):
+                            print(f"[DEBUG] Raw response: {response.text[:2000]}")
+                    except Exception as inner_e:
+                        print(f"[DEBUG] Could not print raw response: {inner_e}")
+                    return self._generate_mock_response(post_type, entity_data)
 
     def _prepare_generation_context(self, post_type, entity_data):
         """Prepare specific prompt, system instructions, and schema for the target post type."""
@@ -104,7 +116,8 @@ class AIWriter:
             "   - Category B — AI Personalization & Technology\n"
             "   - Category C — Role-Specific Outreach Guides\n"
             "   - Category D — Message Templates & Copywriting\n"
-            "   - Category E — Lead Generation & Pipeline Building"
+            "   - Category E — Lead Generation & Pipeline Building\n"
+            "10. CRITICAL FOR JSON VALIDITY: Use single quotes for all HTML attributes (e.g. <a href='...'> or <span style='...'>) and avoid raw double quotes inside the text. If you must use double quotes, they MUST be escaped with a backslash (\\\")."
         )
         
         # Define dynamic acf_fields properties based on post_type
