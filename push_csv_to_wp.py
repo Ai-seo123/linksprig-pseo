@@ -116,6 +116,58 @@ def get_wp_category_id(category_name, wp_url, auth_user, auth_password):
         
     return None
 
+def upload_media_to_wp(image_path, wp_url, auth_user, auth_password):
+    """Uploads a local image file to WordPress Media Library and returns its ID."""
+    if not os.path.exists(image_path):
+        return None
+    
+    filename = os.path.basename(image_path)
+    ext = os.path.splitext(filename)[1].lower()
+    
+    # Determine Content-Type
+    content_types = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif"
+    }
+    content_type = content_types.get(ext, "application/octet-stream")
+    
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Content-Type": content_type,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    auth_str = f"{auth_user}:{auth_password}"
+    b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
+    headers["X-HTTP-Authorization"] = f"Basic {b64_auth}"
+    
+    endpoint = f"{wp_url.rstrip('/')}/wp-json/wp/v2/media"
+    
+    try:
+        with open(image_path, "rb") as img_file:
+            media_data = img_file.read()
+        
+        response = requests.post(
+            endpoint,
+            data=media_data,
+            headers=headers,
+            auth=(auth_user, auth_password),
+            timeout=30
+        )
+        if response.status_code == 201:
+            media_id = response.json().get("id")
+            print(f" - [Media] Successfully uploaded featured image '{filename}' (ID: {media_id})")
+            return media_id
+        else:
+            print(f" - [Warning] Media upload failed for '{filename}': {response.status_code} - {response.text}")
+    except Exception as e:
+        print(f" - [Warning] Error uploading media: {e}")
+        
+    return None
+
 def push_csv_to_wp():
     csv_path = os.getenv("UPLOADED_FILE_PATH", os.path.join("output", "pseo_export_batch.csv"))
     registry_path = os.path.join("output", "generated_registry.json")
@@ -224,6 +276,33 @@ def push_csv_to_wp():
                 
         cat_id = get_wp_category_id(category, WP_URL, WP_USER, WP_APP_PASSWORD) if category else None
         
+        # Check for featured image: either from a CSV column or matching the slug in folders
+        featured_media_id = None
+        csv_img = row.get("featured_image") or row.get("image_path") or row.get("image")
+        
+        # Check CSV column path first if present
+        if csv_img and os.path.exists(csv_img):
+            featured_media_id = upload_media_to_wp(csv_img, WP_URL, WP_USER, WP_APP_PASSWORD)
+        
+        # Fallback to checking folders named after the slug
+        if not featured_media_id:
+            search_dirs = [
+                os.path.join("output", "images"),
+                "output",
+                "images",
+                "assets"
+            ]
+            for sdir in search_dirs:
+                if not os.path.exists(sdir):
+                    continue
+                for ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                    candidate_path = os.path.join(sdir, f"{post_slug}{ext}")
+                    if os.path.exists(candidate_path):
+                        featured_media_id = upload_media_to_wp(candidate_path, WP_URL, WP_USER, WP_APP_PASSWORD)
+                        break
+                if featured_media_id:
+                    break
+
         payload = {
             "title": post_title,
             "slug": post_slug,
@@ -239,6 +318,8 @@ def push_csv_to_wp():
         }
         if cat_id:
             payload["categories"] = [cat_id]
+        if featured_media_id:
+            payload["featured_media"] = featured_media_id
             
         print(f"\n[Pushing {idx+1}/{len(rows)}] Type: {post_type.upper()} | Title: {post_title}")
         

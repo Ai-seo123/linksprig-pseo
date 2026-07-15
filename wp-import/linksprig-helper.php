@@ -183,3 +183,46 @@ add_filter( 'determine_current_user', function( $user_id ) {
     }
     return $user_id;
 }, 10 );
+
+/**
+ * 4. Register Rank Math and Yoast SEO Meta Fields for REST API Access
+ */
+function linksprig_register_seo_meta_rest() {
+    $post_types = array( 'post', 'compare', 'industry', 'problem', 'use_case', 'guide' );
+    
+    foreach ( $post_types as $post_type ) {
+        // Rank Math Title
+        register_meta( 'post', '_rank_math_title', array(
+            'object_subtype' => $post_type,
+            'show_in_rest'   => true,
+            'single'         => true,
+            'type'           => 'string',
+        ) );
+
+        // Rank Math Description
+        register_meta( 'post', '_rank_math_description', array(
+            'object_subtype' => $post_type,
+            'show_in_rest'   => true,
+            'single'         => true,
+            'type'           => 'string',
+        ) );
+        
+        // Yoast SEO Title
+        register_meta( 'post', '_yoast_wpseo_title', array(
+            'object_subtype' => $post_type,
+            'show_in_rest'   => true,
+            'single'         => true,
+            'type'           => 'string',
+        ) );
+
+        // Yoast SEO Description
+        register_meta( 'post', '_yoast_wpseo_metadesc', array(
+            'object_subtype' => $post_type,
+            'show_in_rest'   => true,
+            'single'         => true,
+            'type'           => 'string',
+        ) );
+    }
+}
+add_action( 'init', 'linksprig_register_seo_meta_rest' );
+
