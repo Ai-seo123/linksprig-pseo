@@ -278,7 +278,10 @@ def push_post_to_wordpress(page, keyword):
         "meta": {
             "_rank_math_title": page["meta_title"],
             "_rank_math_description": page["meta_description"],
-            "_rank_math_focus_keyword": keyword
+            "_rank_math_focus_keyword": keyword,
+            "_yoast_wpseo_title": page["meta_title"],
+            "_yoast_wpseo_metadesc": page["meta_description"],
+            "_yoast_wpseo_focuskw": keyword
         }
     }
     if cat_id:
@@ -300,6 +303,7 @@ def push_post_to_wordpress(page, keyword):
                 print(f" - [Skipping] Slug already exists on WordPress: {post_slug} (WP check: {wp_slug})")
                 # Register incrementally in db since it exists in WP
                 db_helper.register_slug(post_slug)
+                db_helper.register_slug(wp_slug)
                 return True
         except Exception as e:
             print(f" - [Warning] Error checking if slug '{post_slug}' exists on WP: {e}")
@@ -325,6 +329,7 @@ def push_post_to_wordpress(page, keyword):
                 print(f" - [Success] WordPress Draft created: '{page['title']}'")
                 # Incrementally save successful slug
                 db_helper.register_slug(page["slug"])
+                db_helper.register_slug(wp_slug)
                 return True
             else:
                 print(f" - [Error] Failed to upload: {response.status_code} - {response.text}")

@@ -140,16 +140,23 @@ class PSEOEngine:
                     self.validator.add_historical_intro(line.strip())
 
         # Load generated registry to skip already generated pages
-        self.registry_file = os.path.join(self.output_dir, "generated_registry.json")
         self.generated_slugs = set()
-        if os.path.exists(self.registry_file):
-            try:
-                with open(self.registry_file, "r", encoding="utf-8") as f:
-                    self.generated_slugs = set(json.load(f))
-            except Exception as e:
-                print(f"[WARNING] Failed to load registry file: {e}")
-        elif os.path.exists(self.intro_history_file):
-            self.seed_registry_from_history()
+        try:
+            import db_helper
+            self.generated_slugs = db_helper.get_all_registered_slugs()
+        except Exception as e:
+            print(f"[WARNING] Failed to load registry from db_helper: {e}")
+            
+        self.registry_file = os.path.join(self.output_dir, "generated_registry.json")
+        if not self.generated_slugs:
+            if os.path.exists(self.registry_file):
+                try:
+                    with open(self.registry_file, "r", encoding="utf-8") as f:
+                        self.generated_slugs = set(json.load(f))
+                except Exception as e:
+                    print(f"[WARNING] Failed to load registry file: {e}")
+            elif os.path.exists(self.intro_history_file):
+                self.seed_registry_from_history()
 
     def save_registry(self):
         try:
@@ -157,6 +164,13 @@ class PSEOEngine:
                 json.dump(list(self.generated_slugs), f, indent=2)
         except Exception as e:
             print(f"[WARNING] Failed to save registry file: {e}")
+            
+        try:
+            import db_helper
+            for slug in self.generated_slugs:
+                db_helper.register_slug(slug)
+        except Exception as e:
+            print(f"[WARNING] Failed to save registry to db_helper: {e}")
 
     def seed_registry_from_history(self):
         print("[INFO] Seeding generated_registry.json from intro_history.txt...")
@@ -540,6 +554,41 @@ class PSEOEngine:
             # Map CPTs to WordPress custom type slugs if different
             # Make sure these match custom post types created in WP (compare, industry, problem, use_case, guide)
             wp_post_type = post_type
+            wp_endpoint = "posts" if wp_post_type == "post" else wp_post_type
+            wp_slug = page["slug"].strip("/").split("/")[-1] if "/" in page["slug"] else page["slug"]
+            
+            # Check if post already exists on WordPress API by slug
+            already_exists = False
+            try:
+                check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}"
+                check_resp = requests.get(
+                    check_endpoint,
+                    params={"slug": wp_slug, "status": "any"},
+                    auth=(WP_USER, WP_APP_PASSWORD),
+                    headers=headers,
+                    timeout=10
+                )
+                if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
+                    print(f" - [Skipping] Slug already exists on WordPress: {wp_slug}")
+                    pushed_slugs.add(slug)
+                    pushed_slugs.add(wp_slug)
+                    
+                    try:
+                        import db_helper
+                        db_helper.register_slug(slug)
+                        db_helper.register_slug(wp_slug)
+                    except Exception:
+                        pass
+                        
+                    already_exists = True
+            except Exception as e:
+                print(f" - [Warning] Error checking if slug '{wp_slug}' exists on WP: {e}")
+                # Resilient WP API Check: Safely skip this post instead of uploading duplicate
+                print(f" - [Skipping] Skipping '{slug}' due to WP check error to prevent duplication.")
+                already_exists = True
+                
+            if already_exists:
+                continue
             
             # Build body content with Table of Contents layout
             content_html = format_blog_html(
@@ -552,10 +601,12 @@ class PSEOEngine:
             cat_name = page.get("category", "")
             cat_id = get_wp_category_id(cat_name, WP_URL, WP_USER, WP_APP_PASSWORD) if cat_name else None
             
+            focus_keyword = orig_page.get("entity", "")
+            
             # REST payload
             payload = {
                 "title": page["title"],
-                "slug": page["slug"],
+                "slug": wp_slug,
                 "content": content_html,
                 "status": WP_POST_STATUS,
                 "type": wp_post_type,
@@ -563,6 +614,10 @@ class PSEOEngine:
                 "meta": {
                     "_rank_math_title": page["meta_title"],
                     "_rank_math_description": page["meta_description"],
+                    "_rank_math_focus_keyword": focus_keyword,
+                    "_yoast_wpseo_title": page["meta_title"],
+                    "_yoast_wpseo_metadesc": page["meta_description"],
+                    "_yoast_wpseo_focuskw": focus_keyword,
                     "schema_json_ld": json.dumps(page["schema_json"]),
                     # ACF custom fields
                     **page["acf_fields"]
@@ -574,8 +629,6 @@ class PSEOEngine:
             max_retries = 3
             backoff_factor = 2
             success = False
-            
-            wp_endpoint = "posts" if wp_post_type == "post" else wp_post_type
             
             for attempt in range(max_retries):
                 try:
@@ -591,6 +644,13 @@ class PSEOEngine:
                     if response.status_code == 201:
                         print(f" - [Success] Draft created: '{page['title']}'")
                         pushed_slugs.add(slug)
+                        pushed_slugs.add(wp_slug)
+                        try:
+                            import db_helper
+                            db_helper.register_slug(slug)
+                            db_helper.register_slug(wp_slug)
+                        except Exception:
+                            pass
                         success = True
                         break
                     elif response.status_code == 404:

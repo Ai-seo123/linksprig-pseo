@@ -191,12 +191,17 @@ function linksprig_register_seo_meta_rest() {
     $post_types = array( 'post', 'compare', 'industry', 'problem', 'use_case', 'guide' );
     
     foreach ( $post_types as $post_type ) {
+        $auth_callback = function() {
+            return current_user_can( 'edit_posts' );
+        };
+
         // Rank Math Title
         register_meta( 'post', '_rank_math_title', array(
             'object_subtype' => $post_type,
             'show_in_rest'   => true,
             'single'         => true,
             'type'           => 'string',
+            'auth_callback'  => $auth_callback,
         ) );
 
         // Rank Math Description
@@ -205,6 +210,16 @@ function linksprig_register_seo_meta_rest() {
             'show_in_rest'   => true,
             'single'         => true,
             'type'           => 'string',
+            'auth_callback'  => $auth_callback,
+        ) );
+
+        // Rank Math Focus Keyword
+        register_meta( 'post', '_rank_math_focus_keyword', array(
+            'object_subtype' => $post_type,
+            'show_in_rest'   => true,
+            'single'         => true,
+            'type'           => 'string',
+            'auth_callback'  => $auth_callback,
         ) );
         
         // Yoast SEO Title
@@ -213,6 +228,7 @@ function linksprig_register_seo_meta_rest() {
             'show_in_rest'   => true,
             'single'         => true,
             'type'           => 'string',
+            'auth_callback'  => $auth_callback,
         ) );
 
         // Yoast SEO Description
@@ -221,8 +237,39 @@ function linksprig_register_seo_meta_rest() {
             'show_in_rest'   => true,
             'single'         => true,
             'type'           => 'string',
+            'auth_callback'  => $auth_callback,
+        ) );
+
+        // Yoast SEO Focus Keyword
+        register_meta( 'post', '_yoast_wpseo_focuskw', array(
+            'object_subtype' => $post_type,
+            'show_in_rest'   => true,
+            'single'         => true,
+            'type'           => 'string',
+            'auth_callback'  => $auth_callback,
         ) );
     }
 }
 add_action( 'init', 'linksprig_register_seo_meta_rest' );
+
+/**
+ * 5. Force-save all meta fields sent in REST API payload (including protected and ACF meta)
+ */
+function linksprig_rest_force_save_meta( $post, $request, $creating ) {
+    $post_id = $post->ID;
+    $params = $request->get_json_params();
+    if ( isset( $params['meta'] ) && is_array( $params['meta'] ) ) {
+        foreach ( $params['meta'] as $key => $value ) {
+            update_post_meta( $post_id, $key, $value );
+        }
+    }
+}
+
+// Add hook for each post type
+add_action( 'rest_insert_post', 'linksprig_rest_force_save_meta', 10, 3 );
+add_action( 'rest_insert_compare', 'linksprig_rest_force_save_meta', 10, 3 );
+add_action( 'rest_insert_industry', 'linksprig_rest_force_save_meta', 10, 3 );
+add_action( 'rest_insert_problem', 'linksprig_rest_force_save_meta', 10, 3 );
+add_action( 'rest_insert_use_case', 'linksprig_rest_force_save_meta', 10, 3 );
+add_action( 'rest_insert_guide', 'linksprig_rest_force_save_meta', 10, 3 );
 

@@ -314,7 +314,6 @@ def build_layout_html(title, toc_list_html, body_content_html, meta_title=None, 
 
   <!-- Middle Column (Main Blog Content) -->
   <article class="linksprig-content-area">
-    <h1 class="linksprig-main-title main-title post-title">{title}</h1>
     {body_content_html}
   </article>
 

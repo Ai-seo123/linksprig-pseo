@@ -150,43 +150,57 @@ def push_posts_to_wordpress(rows):
     
     for idx, row in enumerate(rows):
         post_slug = row.get("post_slug")
-        if post_slug in generated_slugs:
+        if not post_slug:
+            continue
+            
+        wp_slug = post_slug.strip("/").split("/")[-1] if "/" in post_slug else post_slug
+        
+        # Check multiple formats against registry
+        if post_slug in generated_slugs or wp_slug in generated_slugs or f"/{wp_slug}/" in generated_slugs or f"/blog/{wp_slug}" in generated_slugs:
             print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already in registry: {post_slug}")
             continue
             
         # Check if post already exists on WordPress API by slug
-        if post_slug:
-            try:
-                check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
-                check_resp = requests.get(
-                    check_endpoint,
-                    params={"slug": post_slug, "status": "any"},
-                    auth=(WP_USER, WP_APP_PASSWORD),
-                    headers=headers,
-                    timeout=10
-                )
-                if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
-                    print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already exists on WordPress: {post_slug}")
-                    db_helper.register_slug(post_slug)
-                    continue
-            except Exception as e:
-                print(f" - [Warning] Error checking if slug '{post_slug}' exists on WP: {e}")
-                # Resilient WP API Check: Safely skip this post instead of uploading duplicate
-                print(f" - [Skipping {idx+1}/{len(rows)}] Skipping '{post_slug}' due to WP check error to prevent duplication.")
+        try:
+            check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
+            check_resp = requests.get(
+                check_endpoint,
+                params={"slug": wp_slug, "status": "any"},
+                auth=(WP_USER, WP_APP_PASSWORD),
+                headers=headers,
+                timeout=10
+            )
+            if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
+                print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already exists on WordPress: {wp_slug}")
+                db_helper.register_slug(post_slug)
+                db_helper.register_slug(wp_slug)
                 continue
+        except Exception as e:
+            print(f" - [Warning] Error checking if slug '{wp_slug}' exists on WP: {e}")
+            # Resilient WP API Check: Safely skip this post instead of uploading duplicate
+            print(f" - [Skipping {idx+1}/{len(rows)}] Skipping '{post_slug}' due to WP check error to prevent duplication.")
+            continue
+            
         cat_name = row.get("category", "")
         cat_id = get_wp_category_id(cat_name, WP_URL, WP_USER, WP_APP_PASSWORD) if cat_name else None
         
+        meta_title = row.get("meta_title", "")
+        meta_description = row.get("meta_description", "")
+        focus_keyword = row.get("focus_keyword") or row.get("keyword") or ""
+        
         payload = {
             "title": row["post_title"],
-            "slug": row["post_slug"],
+            "slug": wp_slug,
             "content": row["post_content"],
             "status": WP_POST_STATUS,
             "type": "post",
             "meta": {
-                "_rank_math_title": row["meta_title"],
-                "_rank_math_description": row["meta_description"],
-                "_rank_math_focus_keyword": row["focus_keyword"]
+                "_rank_math_title": meta_title,
+                "_rank_math_description": meta_description,
+                "_rank_math_focus_keyword": focus_keyword,
+                "_yoast_wpseo_title": meta_title,
+                "_yoast_wpseo_metadesc": meta_description,
+                "_yoast_wpseo_focuskw": focus_keyword
             }
         }
         if cat_id:
@@ -213,6 +227,7 @@ def push_posts_to_wordpress(rows):
                     print(f" - [Success] Post draft created: '{row['post_title']}'")
                     # Incrementally save successful slug
                     db_helper.register_slug(post_slug)
+                    db_helper.register_slug(wp_slug)
                     successful_count += 1
                     success = True
                     break

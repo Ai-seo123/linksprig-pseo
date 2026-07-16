@@ -24,13 +24,9 @@ class TestFormatter(unittest.TestCase):
         # Parse result using BeautifulSoup
         soup = BeautifulSoup(result_html, "html.parser")
         
-        # Verify Main Title H1
+        # Verify Main Title H1 is not present in body content (WordPress theme handles it)
         h1 = soup.find("h1", class_="linksprig-main-title")
-        self.assertIsNotNone(h1)
-        self.assertEqual(h1.text.strip(), title)
-        self.assertTrue(h1.has_attr("class"))
-        self.assertIn("main-title", h1["class"])
-        self.assertIn("post-title", h1["class"])
+        self.assertIsNone(h1)
         
         # Verify 3-column layout classes
         self.assertIsNotNone(soup.find(class_="linksprig-blog-container"))
@@ -86,10 +82,9 @@ class TestFormatter(unittest.TestCase):
         
         soup = BeautifulSoup(result_html, "html.parser")
         
-        # Verify Main Title
+        # Verify Main Title H1 is not present in body content (WordPress theme handles it)
         h1 = soup.find("h1", class_="linksprig-main-title")
-        self.assertIsNotNone(h1)
-        self.assertEqual(h1.text.strip(), title)
+        self.assertIsNone(h1)
         
         # Verify TOC links
         toc_links = soup.find_all("a", class_="linksprig-toc-link")

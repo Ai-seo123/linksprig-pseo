@@ -252,7 +252,10 @@ def push_csv_to_wp():
         if not post_slug:
             continue
             
-        if post_slug in generated_slugs:
+        wp_slug = post_slug.strip("/").split("/")[-1] if "/" in post_slug else post_slug
+        
+        # Check multiple formats against registry
+        if post_slug in generated_slugs or wp_slug in generated_slugs or f"/{wp_slug}/" in generated_slugs or f"/blog/{wp_slug}" in generated_slugs:
             print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already in registry: {post_slug}")
             continue
             
@@ -262,6 +265,7 @@ def push_csv_to_wp():
         meta_description = row.get("meta_description")
         schema_json_str = row.get("schema_json", "{}")
         category = row.get("category", "")
+        focus_keyword = row.get("focus_keyword") or row.get("keyword") or ""
         
         # Map CPTs or 'post' to correct endpoint slug
         wp_endpoint = "posts" if post_type == "post" else post_type
@@ -271,18 +275,19 @@ def push_csv_to_wp():
             check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}"
             check_resp = requests.get(
                 check_endpoint,
-                params={"slug": post_slug, "status": "any"},
+                params={"slug": wp_slug, "status": "any"},
                 auth=(WP_USER, WP_APP_PASSWORD),
                 headers=headers,
                 timeout=10
             )
             if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
-                print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already exists on WordPress: {post_slug}")
+                print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already exists on WordPress: {wp_slug}")
                 # Register incrementally in db since it exists in WP
                 db_helper.register_slug(post_slug)
+                db_helper.register_slug(wp_slug)
                 continue
         except Exception as e:
-            print(f" - [Warning] Error checking if slug '{post_slug}' exists on WP: {e}")
+            print(f" - [Warning] Error checking if slug '{wp_slug}' exists on WP: {e}")
             # Resilient WP API Check: Safely skip this post instead of uploading duplicate
             print(f" - [Skipping {idx+1}/{len(rows)}] Skipping '{post_slug}' due to WP check error to prevent duplication.")
             continue
@@ -320,22 +325,26 @@ def push_csv_to_wp():
                 if not os.path.exists(sdir):
                     continue
                 for ext in [".jpg", ".jpeg", ".png", ".webp"]:
-                    candidate_path = os.path.join(sdir, f"{post_slug}{ext}")
+                    candidate_path = os.path.join(sdir, f"{wp_slug}{ext}")
                     if os.path.exists(candidate_path):
                         featured_media_id = upload_media_to_wp(candidate_path, WP_URL, WP_USER, WP_APP_PASSWORD)
                         break
                 if featured_media_id:
                     break
-
+ 
         payload = {
             "title": post_title,
-            "slug": post_slug,
+            "slug": wp_slug,
             "content": post_content,
             "status": WP_POST_STATUS,
             "type": post_type,
             "meta": {
                 "_rank_math_title": meta_title,
                 "_rank_math_description": meta_description,
+                "_rank_math_focus_keyword": focus_keyword,
+                "_yoast_wpseo_title": meta_title,
+                "_yoast_wpseo_metadesc": meta_description,
+                "_yoast_wpseo_focuskw": focus_keyword,
                 "schema_json_ld": schema_json_str,
                 **acf_fields
             }
@@ -366,6 +375,7 @@ def push_csv_to_wp():
                     print(f" - [Success] Draft created: '{post_title}'")
                     # Incrementally save successful slug
                     db_helper.register_slug(post_slug)
+                    db_helper.register_slug(wp_slug)
                     success = True
                     break
                 elif response.status_code == 404:
