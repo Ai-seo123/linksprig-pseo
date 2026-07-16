@@ -24,12 +24,24 @@ IMAGE_DIRS = [
 ]
 
 def upload_media_to_wp(image_path):
-    """Uploads a local image file to the WordPress Media Library and returns its ID and URL."""
-    if not os.path.exists(image_path):
+    """Uploads a local image file or remote image URL to the WordPress Media Library and returns its ID and URL."""
+    is_url = str(image_path).startswith("http://") or str(image_path).startswith("https://")
+    
+    if not is_url and not os.path.exists(image_path):
         return None, None
     
-    filename = os.path.basename(image_path)
+    if is_url:
+        from urllib.parse import urlparse
+        parsed = urlparse(image_path)
+        filename = os.path.basename(parsed.path)
+        if not filename or "." not in filename:
+            filename = "featured-image.jpg"
+    else:
+        filename = os.path.basename(image_path)
+        
     ext = os.path.splitext(filename)[1].lower()
+    if not ext:
+        ext = ".jpg"
     
     content_types = {
         ".jpg": "image/jpeg",
@@ -53,8 +65,17 @@ def upload_media_to_wp(image_path):
     endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/media"
     
     try:
-        with open(image_path, "rb") as img_file:
-            media_data = img_file.read()
+        if is_url:
+            print(f"   [Media] Downloading remote featured image: {image_path}")
+            download_resp = requests.get(image_path, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+            if download_resp.status_code == 200:
+                media_data = download_resp.content
+            else:
+                print(f"   [Warning] Failed to download remote image: {download_resp.status_code}")
+                return None, None
+        else:
+            with open(image_path, "rb") as img_file:
+                media_data = img_file.read()
         
         response = requests.post(
             endpoint,
