@@ -8,7 +8,10 @@ import json
 import base64
 import requests
 import time
+import random
+from io import BytesIO
 import pandas as pd
+from PIL import Image as PILImage
 import google.generativeai as genai
 from dotenv import load_dotenv
 from formatter import format_blog_html
@@ -243,112 +246,160 @@ def generate_blog_post(topic, keyword):
             else:
                 return {"error": f"Failed after {max_retries} attempts. Last error: {str(e)}"}
 
-def get_pexels_image_url(query):
-    api_key = os.getenv("PEXELS_API_KEY")
-    if not api_key:
+def generate_pexels_query_from_title(title):
+    """
+    Extracts descriptive nouns from the entire title context,
+    then strictly appends directives to guarantee high-quality professional
+    human faces discussing in an office meeting room, filtering out objects.
+    """
+    clean_title = re.sub(r'[^a-zA-Z0-9\s]', ' ', title).lower()
+    words = clean_title.split()
+    
+    # Extended list of non-visual, abstract, or jargon stop words to exclude
+    stop_words = {
+        'the', 'a', 'an', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+        'to', 'of', 'for', 'with', 'on', 'at', 'by', 'from', 'about', 'how', 'why', 'what', 'who',
+        'when', 'where', 'which', 'your', 'my', 'his', 'her', 'their', 'our', 'its', 'in', 'into',
+        'as', 'than', 'then', 'that', 'this', 'these', 'those', 'it', 'us', 'you', 'me', 'them',
+        'mastering', 'guide', 'ultimate', 'best', 'top', 'tips', 'tricks', 'proven', 'tactical',
+        'advanced', 'practical', 'complete', 'step', 'by', 'easy', 'simple', 'new', 'strategies',
+        'playbook', 'methods', 'process', 'framework', 'system', 'way', 'ways', 'secrets', 'keys',
+        'outbound', 'outreach', 'effective', 'building', 'scaling', 'generation', 'personalized',
+        'linksprig', 'software', 'tool', 'platform', 'api', 'mongodb', 'excel', 'csv', 'xlsx',
+        'contact', 'scrabble', 'tiles', 'alphabet', 'letters', 'wood', 'wooden', 'keyboard', 'laptop',
+        'phone', 'screen', 'hands', 'writing', 'desk', 'b2b', 'saas', 'linkedin', 'seo'
+    }
+    
+    context_words = [w for w in words if w not in stop_words and len(w) > 2]
+    
+    if not context_words:
+        context_words = ["business", "marketing", "corporate"]
+        
+    # Capture the core contextual descriptive terms from the entire title
+    title_context = " ".join(context_words[:4])
+    
+    # STRICTLY append human face meeting room directives to eliminate hands, objects, and abstract wooden tiles
+    search_query = f"{title_context} professional business people faces discussing in meeting room"
+    return search_query.strip()
+
+def solve_dynamically_via_pexels(search_query):
+    """
+    Queries the Pexels API using search parameters and gets landscape orientation stock photos.
+    """
+    if not PEXELS_API_KEY:
+        print("[ERROR] PEXELS_API_KEY missing from environment (.env). Skipping Pexels download.")
         return None
+        
     url = "https://api.pexels.com/v1/search"
-    headers = {"Authorization": api_key}
+    headers = {
+        "Authorization": PEXELS_API_KEY
+    }
     params = {
-        "query": query,
-        "per_page": 1,
+        "query": search_query,
+        "per_page": 5,
         "orientation": "landscape"
     }
+
     try:
-        print(f" - [Pexels] Searching for stock image: '{query}'...")
-        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response = requests.get(url, headers=headers, params=params, timeout=25)
         if response.status_code == 200:
             data = response.json()
-            photos = data.get("photos", [])
-            if photos:
-                img_url = photos[0]["src"]["large"]
-                print(f" - [Pexels] Found image URL: {img_url}")
-                return img_url
-            else:
-                print(f" - [Pexels] No images found for query: '{query}'")
+            if data.get("photos"):
+                photo = random.choice(data["photos"])
+                image_url = photo["src"]["large2x"]
+                print(f" - [Success] Selected Pexels Asset by Photographer: {photo['photographer']}")
+                
+                img_resp = requests.get(image_url, timeout=40)
+                if img_resp.status_code == 200:
+                    return PILImage.open(BytesIO(img_resp.content)).convert("RGBA")
+            print(f" - [Warning] Pexels found no photos matching search query: '{search_query}'.")
         else:
-            print(f" - [Pexels] Failed to search: {response.status_code} - {response.text}")
+            print(f" - [Error] Pexels API handshake failed ({response.status_code})")
     except Exception as e:
-        print(f" - [Pexels Warning] Error calling Pexels API: {e}")
+        print(f" - [Fatal] Pexels connection timed out or failed: {e}")
     return None
 
-def upload_media_to_wp(image_path, wp_url, auth_user, auth_password):
-    """Uploads a local image file or a remote image URL to WordPress Media Library and returns (media_id, media_url)."""
-    is_url = str(image_path).startswith("http://") or str(image_path).startswith("https://")
+def process_clean_landscape_banner(img, target_size=(1704, 923)):
+    """
+    Resizes and center-crops the downloaded photo to exactly 1704x923.
+    """
+    target_w, target_h = target_size
+    orig_w, orig_h = img.size
+    aspect_target = target_w / target_h
+    aspect_orig = orig_w / orig_h
     
-    if not is_url and not os.path.exists(image_path):
-        return None, None
-    
-    # Get filename and extension
-    if is_url:
-        from urllib.parse import urlparse
-        parsed = urlparse(image_path)
-        filename = os.path.basename(parsed.path)
-        if not filename or "." not in filename:
-            filename = "featured-image.jpg"
+    if aspect_orig > aspect_target:
+        new_h = target_h
+        new_w = int(orig_w * (target_h / orig_h))
+        img = img.resize((new_w, new_h), PILImage.Resampling.LANCZOS)
+        left = (new_w - target_w) // 2
+        img = img.crop((left, 0, left + target_w, target_h))
     else:
-        filename = os.path.basename(image_path)
+        new_w = target_w
+        new_h = int(orig_h * (target_w / orig_w))
+        img = img.resize((new_w, new_h), PILImage.Resampling.LANCZOS)
+        top = (new_h - target_h) // 2
+        img = img.crop((0, top, target_w, top + target_h))
         
-    ext = os.path.splitext(filename)[1].lower()
-    if not ext:
-        ext = ".jpg"
-    
-    # Determine Content-Type
-    content_types = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".webp": "image/webp",
-        ".gif": "image/gif"
-    }
-    content_type = content_types.get(ext, "application/octet-stream")
-    
+    return img
+
+def upload_image_to_wordpress(img_buffer, slug_name):
+    """
+    Saves image bytes into the WordPress Media Gallery and registers a database asset ID.
+    """
+    if not img_buffer:
+        return None, None
+    media_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/media"
     headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"',
-        "Content-Type": content_type,
+        "Content-Disposition": f"attachment; filename={slug_name}-featured.jpg",
+        "Content-Type": "image/jpeg",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    
-    auth_str = f"{auth_user}:{auth_password}"
+    auth_str = f"{WP_USER}:{WP_APP_PASSWORD}"
     b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
     headers["X-HTTP-Authorization"] = f"Basic {b64_auth}"
-    
-    endpoint = f"{wp_url.rstrip('/')}/wp-json/wp/v2/media"
-    
     try:
-        if is_url:
-            print(f" - [Media] Downloading remote featured image: {image_path}")
-            download_resp = requests.get(image_path, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
-            if download_resp.status_code == 200:
-                media_data = download_resp.content
-            else:
-                print(f" - [Warning] Failed to download remote image: {download_resp.status_code}")
-                return None, None
-        else:
-            with open(image_path, "rb") as img_file:
-                media_data = img_file.read()
-        
-        response = requests.post(
-            endpoint,
-            data=media_data,
-            headers=headers,
-            auth=(auth_user, auth_password),
-            timeout=30
-        )
+        response = requests.post(media_endpoint, auth=(WP_USER, WP_APP_PASSWORD), headers=headers, data=img_buffer.getvalue(), timeout=25)
         if response.status_code == 201:
-            res_json = response.json()
-            media_id = res_json.get("id")
-            media_url = res_json.get("source_url")
-            print(f" - [Media] Successfully uploaded featured image '{filename}' (ID: {media_id})")
-            return media_id, media_url
-        else:
-            print(f" - [Warning] Media upload failed for '{filename}': {response.status_code} - {response.text}")
+            media_data = response.json()
+            return media_data["id"], media_data["source_url"]
+        print(f" - [Media Error] WordPress Upload status: {response.status_code} - {response.text}")
     except Exception as e:
-        print(f" - [Warning] Error uploading media: {e}")
-        
+        print(f" - [Media Error] Upload exception: {e}")
     return None, None
 
+def find_existing_post_id(post_slug, wp_endpoint, headers, auth_user, auth_password, wp_url=None):
+    """
+    Checks if a post with the given slug already exists on WordPress to update it instead of duplicating.
+    """
+    if not post_slug:
+        return None
+
+    wp_url = wp_url or WP_URL
+    check_endpoint = f"{wp_url.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}"
+    try:
+        check_resp = requests.get(
+            check_endpoint,
+            params={"slug": post_slug, "status": "any", "t": int(time.time())},
+            auth=(auth_user, auth_password),
+            headers=headers,
+            timeout=10,
+        )
+        if check_resp.status_code == 200:
+            payload = check_resp.json()
+            if isinstance(payload, list) and len(payload) > 0:
+                return payload[0].get("id")
+            if isinstance(payload, dict) and payload.get("id"):
+                return payload.get("id")
+    except Exception as e:
+        print(f" - [Warning] Error checking if slug '{post_slug}' exists on WP: {e}")
+
+    return None
+
 def push_post_to_wordpress(page, keyword):
+    """
+    Prepares post parameters, downloads stock images dynamically, and uploads the draft.
+    """
     if not WP_URL or not WP_USER or not WP_APP_PASSWORD:
         print("[WARNING] WordPress credentials not complete. Skipping upload.")
         return False
@@ -357,38 +408,54 @@ def push_post_to_wordpress(page, keyword):
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    
     auth_str = f"{WP_USER}:{WP_APP_PASSWORD}"
     b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
     headers["X-HTTP-Authorization"] = f"Basic {b64_auth}"
     
-    # Clean slug for WP payload (take leaf node)
     wp_slug = page["slug"].strip("/").split("/")[-1] if "/" in page["slug"] else page["slug"]
+
+    # Generate Pexels Query and grab landscape image with strict corporate settings
+    print(f" - [Dynamic Visualizer] Synthesizing Pexels query from title: '{page['title']}'...")
+    pexels_query = generate_pexels_query_from_title(page['title'])
+    print(f" - [Pexels Query] Result: '{pexels_query}'")
     
-    # -------------------------------------------------------------------------
-    # AUTOMATIC PEXELS STOCK IMAGE INTEGRATION
-    # -------------------------------------------------------------------------
-    media_id = None
-    media_url = None
-    if os.getenv("PEXELS_API_KEY"):
-        img_url = get_pexels_image_url(keyword)
-        if img_url:
-            media_id, media_url = upload_media_to_wp(img_url, WP_URL, WP_USER, WP_APP_PASSWORD)
-    # -------------------------------------------------------------------------
+    raw_photo = solve_dynamically_via_pexels(pexels_query)
+    media_id, media_url = None, None
     
+    if raw_photo:
+        processed_img = process_clean_landscape_banner(raw_photo)
+        img_buffer = BytesIO()
+        processed_img_rgb = processed_img.convert("RGB")
+        processed_img_rgb.save(img_buffer, format="JPEG", quality=98)
+        img_buffer.seek(0)
+        media_id, media_url = upload_image_to_wordpress(img_buffer, wp_slug)
+
+    # Embed Hero image into content layout right after introduction text
     intro_content = page["intro"]
     if media_url:
-        # Injects the banner image inside the blog below the H1
-        image_html = f'\n<p><img src="{media_url}" alt="{page["title"]}" class="aligncenter size-full linksprig-featured-image" /></p>\n'
+        image_html = f'\n<p><img src="{media_url}" alt="{page["title"]}" class="aligncenter size-full linksprig-featured-banner" width="1704" height="923" /></p>\n'
         intro_content = intro_content + image_html
-        
-    # Build content HTML with Table of Contents layout
+
+    # Prepend dynamic CSS to hide the theme header and preserve our coding H1 title
+    theme_title_remover_css = (
+        "<style>\n"
+        "  /* Programmatically hides native WordPress theme headers on this page */\n"
+        "  .entry-title, .post-title, .page-title, h1.entry-title, h1.post-title, "
+        ".entry-header, .single-post .entry-title, .single-post h1.post-title, "
+        ".elementor-page-title, .page-header {\n"
+        "    display: none !important;\n"
+        "  }\n"
+        "</style>\n"
+    )
+
+    # Compile final HTML payload
     content_html = format_blog_html(
         title=page["title"],
         intro_html=intro_content,
         body_sections=page["body_sections"],
         faqs_list=page["faqs"]
     )
+    final_post_content = theme_title_remover_css + f"<h1>{page['title']}</h1>\n" + content_html
     
     cat_name = page.get("category", "")
     cat_id = get_wp_category_id(cat_name, WP_URL, WP_USER, WP_APP_PASSWORD) if cat_name else None
@@ -396,78 +463,53 @@ def push_post_to_wordpress(page, keyword):
     payload = {
         "title": page["title"],
         "slug": wp_slug,
-        "content": content_html,
+        "content": final_post_content,
         "status": WP_POST_STATUS,
         "type": "post",
         "meta": {
             "_rank_math_title": page["meta_title"],
             "_rank_math_description": page["meta_description"],
-            "_rank_math_focus_keyword": keyword,
-            "_yoast_wpseo_title": page["meta_title"],
-            "_yoast_wpseo_metadesc": page["meta_description"],
-            "_yoast_wpseo_focuskw": keyword
+            "_rank_math_focus_keyword": keyword
         }
     }
     if cat_id:
         payload["categories"] = [cat_id]
     if media_id:
         payload["featured_media"] = media_id
-    
-    # Check if post already exists on WordPress API by slug
-    post_slug = page.get("slug")
-    if post_slug:
-        try:
-            check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
-            check_resp = requests.get(
-                check_endpoint,
-                params={"slug": wp_slug, "status": "any"},
-                auth=(WP_USER, WP_APP_PASSWORD),
-                headers=headers,
-                timeout=10
-            )
-            if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
-                print(f" - [Skipping] Slug already exists on WordPress: {post_slug} (WP check: {wp_slug})")
-                # Register incrementally in db since it exists in WP
-                db_helper.register_slug(post_slug)
-                db_helper.register_slug(wp_slug)
-                return True
-        except Exception as e:
-            print(f" - [Warning] Error checking if slug '{post_slug}' exists on WP: {e}")
-            # Resilient WP API Check: Safely skip this post instead of uploading duplicate
-            print(f" - [Skipping] Skipping '{post_slug}' due to WP check error to prevent duplication.")
-            return False
-            
+
+    existing_post_id = find_existing_post_id(
+        wp_slug,
+        "posts",
+        headers,
+        WP_USER,
+        WP_APP_PASSWORD,
+        WP_URL,
+    )
+    if existing_post_id:
+        print(f" - [Updating] Existing post found for slug '{wp_slug}' (ID: {existing_post_id})")
+
     max_retries = 3
     backoff_factor = 2
-    
     for attempt in range(max_retries):
         try:
-            endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
-            response = requests.post(
-                endpoint,
-                json=payload,
-                auth=(WP_USER, WP_APP_PASSWORD),
-                headers=headers,
-                timeout=15
-            )
-            
-            if response.status_code == 201:
-                print(f" - [Success] WordPress Draft created: '{page['title']}'")
-                # Incrementally save successful slug
-                db_helper.register_slug(page["slug"])
-                db_helper.register_slug(wp_slug)
-                return True
+            if existing_post_id:
+                endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts/{existing_post_id}"
+                response = requests.put(endpoint, json=payload, auth=(WP_USER, WP_APP_PASSWORD), headers=headers, timeout=15)
             else:
-                print(f" - [Error] Failed to upload: {response.status_code} - {response.text}")
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            print(f" - [Attempt {attempt+1}/{max_retries}] Connection/Timeout error: {e}")
+                endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
+                response = requests.post(endpoint, json=payload, auth=(WP_USER, WP_APP_PASSWORD), headers=headers, timeout=15)
+                
+            if response.status_code in (200, 201):
+                action = "updated" if existing_post_id else "created"
+                print(f" - [Success] WordPress Draft {action} with automatic face-only Pexels cover photo!")
+                db_helper.register_slug(page["slug"])
+                return True
+            print(f" - [Error] Failed to upload: {response.status_code} - {response.text}")
         except Exception as e:
             print(f" - [Error] Unexpected exception: {e}")
             break
-            
-        if attempt < max_retries - 1:
-            sleep_time = backoff_factor ** attempt
-            time.sleep(sleep_time)
+        time.sleep(backoff_factor ** attempt)
+    return False
             
 def main():
     excel_path = os.getenv("UPLOADED_FILE_PATH", r"C:\Users\ARNAV\Downloads\LinkSprig-Blogs-Topics-Keywords-22ndMay'26 1.xlsx")
