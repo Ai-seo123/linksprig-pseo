@@ -31,6 +31,112 @@ WP_POST_STATUS = os.getenv("WP_POST_STATUS", "draft").lower()
 RUN_QA_VALIDATOR = os.getenv("RUN_QA_VALIDATOR", "True").lower() == "true"
 DAILY_PAGES_GOAL = int(os.getenv("DAILY_PAGES_GOAL", "50"))
 
+def get_pexels_image_url(query):
+    api_key = os.getenv("PEXELS_API_KEY")
+    if not api_key:
+        return None
+    url = "https://api.pexels.com/v1/search"
+    headers = {"Authorization": api_key}
+    params = {
+        "query": query,
+        "per_page": 1,
+        "orientation": "landscape"
+    }
+    try:
+        print(f" - [Pexels] Searching for stock image: '{query}'...")
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            photos = data.get("photos", [])
+            if photos:
+                img_url = photos[0]["src"]["large"]
+                print(f" - [Pexels] Found image URL: {img_url}")
+                return img_url
+            else:
+                print(f" - [Pexels] No images found for query: '{query}'")
+        else:
+            print(f" - [Pexels] Failed to search: {response.status_code} - {response.text}")
+    except Exception as e:
+        print(f" - [Pexels Warning] Error calling Pexels API: {e}")
+    return None
+
+def upload_media_to_wp(image_path, wp_url, auth_user, auth_password):
+    """Uploads a local image file or a remote image URL to WordPress Media Library and returns (media_id, media_url)."""
+    is_url = str(image_path).startswith("http://") or str(image_path).startswith("https://")
+    
+    if not is_url and not os.path.exists(image_path):
+        return None, None
+    
+    # Get filename and extension
+    if is_url:
+        from urllib.parse import urlparse
+        parsed = urlparse(image_path)
+        filename = os.path.basename(parsed.path)
+        if not filename or "." not in filename:
+            filename = "featured-image.jpg"
+    else:
+        filename = os.path.basename(image_path)
+        
+    ext = os.path.splitext(filename)[1].lower()
+    if not ext:
+        ext = ".jpg"
+    
+    # Determine Content-Type
+    content_types = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif"
+    }
+    content_type = content_types.get(ext, "application/octet-stream")
+    
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Content-Type": content_type,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    import base64
+    auth_str = f"{auth_user}:{auth_password}"
+    b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
+    headers["X-HTTP-Authorization"] = f"Basic {b64_auth}"
+    
+    endpoint = f"{wp_url.rstrip('/')}/wp-json/wp/v2/media"
+    
+    try:
+        if is_url:
+            print(f" - [Media] Downloading remote featured image: {image_path}")
+            download_resp = requests.get(image_path, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+            if download_resp.status_code == 200:
+                media_data = download_resp.content
+            else:
+                print(f" - [Warning] Failed to download remote image: {download_resp.status_code}")
+                return None, None
+        else:
+            with open(image_path, "rb") as img_file:
+                media_data = img_file.read()
+        
+        response = requests.post(
+            endpoint,
+            data=media_data,
+            headers=headers,
+            auth=(auth_user, auth_password),
+            timeout=30
+        )
+        if response.status_code == 201:
+            res_json = response.json()
+            media_id = res_json.get("id")
+            media_url = res_json.get("source_url")
+            print(f" - [Media] Successfully uploaded featured image '{filename}' (ID: {media_id})")
+            return media_id, media_url
+        else:
+            print(f" - [Warning] Media upload failed for '{filename}': {response.status_code} - {response.text}")
+    except Exception as e:
+        print(f" - [Warning] Error uploading media: {e}")
+        
+    return None, None
+
 class PSEOEngine:
     def __init__(self):
         self.db_dir = os.path.join(SCRIPT_DIR, "database")
@@ -423,8 +529,26 @@ class PSEOEngine:
             
             wp_post_type = post_type
             
+            focus_keyword = orig_page.get("entity", "")
+
+            # -------------------------------------------------------------------------
+            # AUTOMATIC PEXELS STOCK IMAGE INTEGRATION
+            # -------------------------------------------------------------------------
+            media_id = None
+            media_url = None
+            if os.getenv("PEXELS_API_KEY"):
+                img_url = get_pexels_image_url(focus_keyword or page["title"])
+                if img_url:
+                    media_id, media_url = upload_media_to_wp(img_url, WP_URL, WP_USER, WP_APP_PASSWORD)
+            # -------------------------------------------------------------------------
+
+            intro_content = page["intro"]
+            if media_url:
+                image_html = f'\n<p><img src="{media_url}" alt="{page["title"]}" class="aligncenter size-full linksprig-featured-image" /></p>\n'
+                intro_content = intro_content + image_html
+
             # Build body content
-            content_html = page["intro"]
+            content_html = intro_content
             for sec in page["body_sections"]:
                 content_html += f"\n\n<h3>{sec['heading']}</h3>\n{sec['content']}"
             
@@ -450,6 +574,8 @@ class PSEOEngine:
                     **page["acf_fields"]
                 }
             }
+            if media_id:
+                payload["featured_media"] = media_id
             
             max_retries = 3
             backoff_factor = 2
