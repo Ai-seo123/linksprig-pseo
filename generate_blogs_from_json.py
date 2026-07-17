@@ -133,10 +133,15 @@ def main():
 
         # Upload directly to WordPress
         if EXPORT_MODE in ["wp_api", "both"]:
-            push_post_to_wordpress(page_data, keyword)
+            success = push_post_to_wordpress(page_data, keyword)
+            if success:
+                generated_slugs.add(slug)
+                generated_slugs.add(leaf_slug)
         else:
             # If CSV only, immediately register incrementally
             db_helper.register_slug(page_data["slug"])
+            generated_slugs.add(slug)
+            generated_slugs.add(leaf_slug)
 
         # Add a delay between API calls to prevent rate limits
         time.sleep(1)
