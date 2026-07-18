@@ -132,6 +132,77 @@ def process_uploaded_file(file_path: str, filename: str):
         print(f"Script missing at: {script_path}")
 
 
+def run_migration_task(job_id: str):
+    """Background task to run the migration script"""
+    db_helper.update_job_status(job_id, "processing")
+
+    # Find where the script is located relative to main.py
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(backend_dir)
+    script_path = os.path.join(parent_dir, "migrate_existing_posts_images.py")
+    
+    if os.path.exists(script_path):
+        env = os.environ.copy()
+        env["PYTHONWARNINGS"] = "ignore"
+        try:
+            # Run using virtual environment's Python interpreter
+            venv_python = os.path.join(parent_dir, ".venv", "Scripts", "python.exe")
+            if not os.path.exists(venv_python):
+                venv_python = "python"
+                
+            result = subprocess.run(
+                [venv_python, script_path], 
+                env=env, 
+                cwd=parent_dir, 
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            db_helper.update_job_status(job_id, "completed")
+            print(f"Successfully ran migration script")
+        except subprocess.CalledProcessError as e:
+            err_output = (e.stderr or "").strip()
+            out_output = (e.stdout or "").strip()
+            error_details = err_output if err_output else out_output
+            
+            if not error_details:
+                error_details = f"Script failed with exit code {e.returncode}"
+            else:
+                if len(error_details) > 400:
+                    error_details = "..." + error_details[-397:]
+            db_helper.update_job_status(job_id, "failed", error_details)
+            print(f"Error executing migration script: {e}")
+            if e.stderr:
+                print(f"Stderr:\n{e.stderr}")
+        except Exception as e:
+            db_helper.update_job_status(job_id, "failed", str(e))
+            print(f"Error executing migration script: {e}")
+    else:
+        db_helper.update_job_status(job_id, "failed", "Migration script missing on server")
+        print(f"Migration script missing at: {script_path}")
+
+
+@app.post("/api/migrate")
+async def trigger_migration(
+    background_tasks: BackgroundTasks,
+    username: str = Depends(get_current_user)
+):
+    job_id = "migrate_existing_posts_images.py"
+    
+    # Check if there is an active job running for migration
+    existing_job = db_helper.get_job_status(job_id)
+    if existing_job and existing_job.get("status") in ["queued", "processing"]:
+        raise HTTPException(
+            status_code=400,
+            detail="A migration job is already running. Please wait until it completes."
+        )
+        
+    db_helper.update_job_status(job_id, "queued")
+    background_tasks.add_task(run_migration_task, job_id)
+    
+    return {"message": "Migration queued for processing", "job_id": job_id}
+
+
 @app.post("/api/upload")
 async def upload_file(
     background_tasks: BackgroundTasks,

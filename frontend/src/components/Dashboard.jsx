@@ -138,6 +138,48 @@ const Dashboard = ({ token, onLogout }) => {
     }
   };
 
+  const triggerMigration = async () => {
+    const jobName = 'migrate_existing_posts_images.py';
+    
+    setStatusMap(prev => ({
+      ...prev,
+      [jobName]: { state: 'queued', message: 'Queued for processing' }
+    }));
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/migrate`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.status === 401) {
+        onLogout();
+        return;
+      }
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setStatusMap(prev => ({
+          ...prev,
+          [jobName]: { state: 'queued', message: 'Queued for processing' }
+        }));
+      } else {
+        setStatusMap(prev => ({
+          ...prev,
+          [jobName]: { state: 'error', message: data.detail || 'Migration trigger failed' }
+        }));
+      }
+    } catch (err) {
+      setStatusMap(prev => ({
+        ...prev,
+        [jobName]: { state: 'error', message: 'Network error triggering migration' }
+      }));
+    }
+  };
+
   // Fetch existing background jobs on mount
   useEffect(() => {
     const fetchExistingJobs = async () => {
@@ -149,7 +191,9 @@ const Dashboard = ({ token, onLogout }) => {
         });
         if (response.ok) {
           const jobs = await response.json();
-          const existingFiles = Object.keys(jobs).map(name => ({ name }));
+          const existingFiles = Object.keys(jobs)
+            .filter(name => name !== 'migrate_existing_posts_images.py')
+            .map(name => ({ name }));
           if (existingFiles.length > 0) {
             setFiles(existingFiles);
             const statuses = {};
@@ -482,6 +526,48 @@ const Dashboard = ({ token, onLogout }) => {
             {uploading ? <Loader2 className="animate-spin" size={20} /> : <UploadCloud size={20} />}
             {uploading ? 'Processing...' : 'Upload and Process Queue'}
           </button>
+
+          <div style={{ marginTop: '2.5rem', borderTop: '1px solid var(--surface-border)', paddingTop: '2rem' }}>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'linear-gradient(to right, #fff, #94a3b8)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              <Sparkles size={18} color="var(--primary-color)" style={{ stroke: 'var(--primary-color)' }} /> Retroactive CPT Migration
+            </h3>
+            <p className="subtitle" style={{ fontSize: '0.875rem', marginBottom: '1.25rem', color: 'var(--text-secondary)' }}>
+              Update previously generated draft posts on WordPress to apply Pexels image center-cropping (1704x923) and CSS native title header styling overrides.
+            </p>
+
+            {statusMap['migrate_existing_posts_images.py'] && (
+              <div style={{ marginBottom: '1.25rem' }}>
+                <div className={`pipeline-status-banner pipeline-status-${statusMap['migrate_existing_posts_images.py'].state === 'queued' || statusMap['migrate_existing_posts_images.py'].state === 'processing' ? 'running' : statusMap['migrate_existing_posts_images.py'].state}`} style={{ marginTop: 0 }}>
+                  {statusMap['migrate_existing_posts_images.py'].state === 'processing' && <Loader2 className="animate-spin" size={20} color="#fbbf24" />}
+                  {statusMap['migrate_existing_posts_images.py'].state === 'queued' && <Loader2 className="animate-pulse" size={20} color="#818cf8" />}
+                  {statusMap['migrate_existing_posts_images.py'].state === 'success' && <CheckCircle size={20} color="#34d399" />}
+                  {statusMap['migrate_existing_posts_images.py'].state === 'error' && <XCircle size={20} color="#f87171" />}
+                  <span style={{ marginLeft: '0.5rem' }}>
+                    Migration: {statusMap['migrate_existing_posts_images.py'].message}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <button
+              className="primary-btn"
+              style={{ background: 'linear-gradient(135deg, #a855f7, #6366f1)', width: '100%' }}
+              onClick={triggerMigration}
+              disabled={
+                statusMap['migrate_existing_posts_images.py']?.state === 'queued' ||
+                statusMap['migrate_existing_posts_images.py']?.state === 'processing'
+              }
+            >
+              {statusMap['migrate_existing_posts_images.py']?.state === 'processing' || statusMap['migrate_existing_posts_images.py']?.state === 'queued' ? (
+                <Loader2 className="animate-spin" size={20} />
+              ) : (
+                <Sparkles size={20} />
+              )}
+              {statusMap['migrate_existing_posts_images.py']?.state === 'processing' || statusMap['migrate_existing_posts_images.py']?.state === 'queued'
+                ? 'Running CPT Migration...'
+                : 'Start WordPress CPT Migration'}
+            </button>
+          </div>
         </>
       ) : (
         <div className="ideas-panel">
