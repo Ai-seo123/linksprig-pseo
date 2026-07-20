@@ -116,10 +116,6 @@ def get_wp_category_id(category_name, wp_url, auth_user, auth_password):
     return None
 
 def generate_pexels_query_from_title(title):
-    """
-    Sweeps the entire title context, filters out abstract and technical stop words,
-    and appends face-only meeting room parameters.
-    """
     clean_title = re.sub(r'[^a-zA-Z0-9\s]', ' ', title).lower()
     words = clean_title.split()
     stop_words = {
@@ -136,19 +132,12 @@ def generate_pexels_query_from_title(title):
     if len(keywords) < 2:
         keywords = [w for w in words if len(w) > 3]
     base_keywords = " ".join(keywords[:3])
-    
-    # Strict "professional human faces" boardroom conversation setting
     return f"{base_keywords} professional business people faces discussing in meeting room"
 
 def solve_dynamically_via_pexels(search_query):
-    """
-    Queries Pexels using max-pool sizes of 80 to ensure rich variety,
-    consulting a JSON registry to guarantee no image is ever repeated.
-    """
     if not PEXELS_API_KEY:
         return None
         
-    # Track previously downloaded image IDs across scripts
     used_images_file = "used_pexels_images.json"
     used_ids = set()
     if os.path.exists(used_images_file):
@@ -160,47 +149,50 @@ def solve_dynamically_via_pexels(search_query):
             
     url = "https://api.pexels.com/v1/search"
     headers = {"Authorization": PEXELS_API_KEY}
-    params = {
-        "query": search_query, 
-        "per_page": 80, # Maximized pool size to ensure deduplication succeeds
-        "orientation": "landscape"
-    }
-    try:
-        response = requests.get(url, headers=headers, params=params, timeout=25)
-        if response.status_code == 200:
-            data = response.json()
-            photos = data.get("photos", [])
-            
-            # Select only images that haven't been used on other posts yet
-            fresh_photos = [p for p in photos if p["id"] not in used_ids]
-            
-            if fresh_photos:
-                selected_photo = random.choice(fresh_photos)
-                photo_id = selected_photo["id"]
-                image_url = selected_photo["src"]["large2x"]
-                print(f" - [Pexels] Selected fresh, unique image ID {photo_id} by: {selected_photo['photographer']}")
+
+    # Dynamic page offset search strategy to ensure unique images for similar titles
+    base_page_offsets = list(range(1, 31))
+    random.shuffle(base_page_offsets)
+
+    for page_offset in base_page_offsets:
+        params = {
+            "query": search_query, 
+            "per_page": 80,
+            "page": page_offset,
+            "orientation": "landscape"
+        }
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=25)
+            if response.status_code == 200:
+                data = response.json()
+                photos = data.get("photos", [])
                 
-                # Download bytes
-                img_resp = requests.get(image_url, timeout=40)
-                if img_resp.status_code == 200:
-                    # Update tracking database
-                    used_ids.add(photo_id)
-                    try:
-                        with open(used_images_file, "w") as f:
-                            json.dump(list(used_ids), f)
-                    except Exception as e:
-                        print(f" - [Warning] Failed to update used image tracking registry: {e}")
-                        
-                    return PILImage.open(BytesIO(img_resp.content)).convert("RGBA")
-            else:
-                print(" - [Pexels Warning] All 80 fetched images for this query are already used. Selecting first available.")
-                if photos:
-                    selected_photo = photos[0]
-                    img_resp = requests.get(selected_photo["src"]["large2x"], timeout=40)
+                fresh_photos = [p for p in photos if p["id"] not in used_ids]
+                
+                if fresh_photos:
+                    selected_photo = random.choice(fresh_photos)
+                    photo_id = selected_photo["id"]
+                    image_url = selected_photo["src"]["large2x"]
+                    print(f" - [Pexels] Selected fresh, unique image ID {photo_id} (Page {page_offset}) by: {selected_photo['photographer']}")
+                    
+                    img_resp = requests.get(image_url, timeout=40)
                     if img_resp.status_code == 200:
+                        used_ids.add(photo_id)
+                        try:
+                            with open(used_images_file, "w") as f:
+                                json.dump(list(used_ids), f)
+                        except Exception as e:
+                            print(f" - [Warning] Failed to update used image tracking registry: {e}")
+                            
                         return PILImage.open(BytesIO(img_resp.content)).convert("RGBA")
-    except Exception as e:
-        print(f" - [Pexels Warning] Failed to fetch unique image: {e}")
+                else:
+                    print(f" - [Pexels Pagination] All 80 images on Page {page_offset} are used. Advancing to next page...")
+            else:
+                print(f" - [Pexels Warning] Pexels API failed: {response.status_code}")
+                break
+        except Exception as e:
+            print(f" - [Pexels Warning] Failed to fetch unique image: {e}")
+            break
     return None
 
 def process_clean_landscape_banner(img, target_size=(1704, 923)):
@@ -484,7 +476,6 @@ class PSEOEngine:
             slug = orig_page["slug"]
             wp_post_type = "post" if post_type == "post" else post_type
             
-            # Pexels workflow integration for custom landing page types
             print(f" - [Visual Discovery] Extracting search queries for: '{page['title']}'...")
             pexels_query = generate_pexels_query_from_title(page['title'])
             raw_photo = solve_dynamically_via_pexels(pexels_query)
@@ -499,16 +490,11 @@ class PSEOEngine:
                 processed_img_rgb.save(img_buffer, format="JPEG", quality=98)
                 img_buffer.seek(0)
                 media_id, media_url = upload_image_to_wordpress(img_buffer, wp_slug)
-                
-            intro_content = page["intro"]
-            if media_url:
-                image_html = f'\n<p><img src="{media_url}" alt="{page["title"]}" class="aligncenter size-full linksprig-featured-banner" width="1704" height="923" /></p>\n'
-                intro_content = intro_content + image_html
 
             # Prepend CSS override to drop WordPress native headers and collapse margins cleanly
             theme_title_remover_css = (
                 "<style>\n"
-                "  /* Programmatically hides native WordPress headers and collapses empty layout space */\n"
+                "  /* Programmatically hides native WordPress and Elementor headers */\n"
                 "  .entry-title, .post-title, .page-title, h1.entry-title, h1.post-title, \n"
                 "  .entry-header, .single-post .entry-title, .single-post h1.post-title, \n"
                 "  .elementor-page-title, .page-header {\n"
@@ -517,17 +503,54 @@ class PSEOEngine:
                 "    padding: 0 !important;\n"
                 "    height: 0 !important;\n"
                 "    min-height: 0 !important;\n"
+                "    overflow: hidden !important;\n"
                 "  }\n"
-                "  /* Collapse margins of the immediate parent containers */\n"
-                "  .entry-header, .page-header {\n"
-                "    margin-bottom: 0 !important;\n"
-                "    padding-bottom: 0 !important;\n"
+                "  /* Collapse margins/paddings of parent layout containers above the content */\n"
+                "  .entry-header, .page-header, .post-header, .hero-section {\n"
+                "    margin: 0 !important;\n"
+                "    padding: 0 !important;\n"
+                "    height: 0 !important;\n"
+                "    min-height: 0 !important;\n"
+                "  }\n"
+                "  /* Force zero-gap on main container elements and Elementor wraps */\n"
+                "  body.single .site-content, \n"
+                "  body.single .content-area, \n"
+                "  body.single #primary, \n"
+                "  body.single #main, \n"
+                "  body.single #content,\n"
+                "  body.single article, \n"
+                "  body.single .entry-content, \n"
+                "  body.single .post-content, \n"
+                "  body.single .post-inner,\n"
+                "  body.single .ast-container,\n"
+                "  body.single .elementor-section-wrap,\n"
+                "  body.single .elementor-page,\n"
+                "  body.single .post-wrap {\n"
+                "    padding-top: 0 !important;\n"
+                "    margin-top: 0 !important;\n"
+                "  }\n"
+                "  /* Remove top spacing directly from custom title */\n"
+                "  h1.linksprig-custom-title, \n"
+                "  .entry-content h1:first-of-type,\n"
+                "  .post-content h1:first-of-type,\n"
+                "  article h1:first-of-type {\n"
+                "    margin-top: 0 !important;\n"
+                "    padding-top: 20px !important;\n"
                 "  }\n"
                 "</style>\n"
             )
 
-            content_html = format_blog_html(title=page["title"], intro_html=intro_content, body_sections=page["body_sections"], faqs_list=page["faqs"])
-            final_content = theme_title_remover_css + f"<h1>{page['title']}</h1>\n" + content_html
+            # Perfect layout stacking directly generated inside python
+            content_html = format_blog_html(title=page["title"], intro_html=page["intro"], body_sections=page["body_sections"], faqs_list=page["faqs"])
+            
+            final_content = theme_title_remover_css
+            final_content += f"<h1 class='linksprig-custom-title'>{page['title']}</h1>\n"
+            
+            if media_url:
+                final_content += f'<p><img src="{media_url}" alt="{page["title"]}" class="aligncenter size-full linksprig-featured-banner" width="1704" height="923" /></p>\n'
+                
+            final_content += content_html
+            
             cat_name = page.get("category", "")
             cat_id = get_wp_category_id(cat_name, WP_URL, WP_USER, WP_APP_PASSWORD) if cat_name else None
             
@@ -557,11 +580,9 @@ class PSEOEngine:
                     response = requests.post(endpoint, json=payload, auth=(WP_USER, WP_APP_PASSWORD), headers=headers, timeout=15)
                     
                     if response.status_code in (200, 201):
-                        print(f" - [Success] Draft CPT created: '{page['title']}' with Pexels Cover!")
+                        print(f" - [Success] Draft CPT created: '{page['title']}' with identical featured/hero banner!")
                         pushed_slugs.add(slug)
                         break
-                    else:
-                        print(f" - [Error] Failed CPT post push: {response.status_code} - {response.text}")
                 except Exception as e:
                     print(f" - [Error] Connection failed: {e}")
                 time.sleep(backoff_factor ** attempt)

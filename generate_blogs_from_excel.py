@@ -46,9 +46,6 @@ else:
     genai.configure(api_key=API_KEY)
 
 def clean_slug(text):
-    """
-    Cleans up a topic string into a web-friendly URL slug.
-    """
     text = str(text).lower()
     text = re.sub(r'[^a-z0-9\s-]', '', text)
     text = re.sub(r'[\s-]+', '-', text)
@@ -66,9 +63,6 @@ CATEGORY_MAP = {
 }
 
 def normalize_category(name):
-    """
-    Normalizes a sheet category header name into a canonical category string.
-    """
     if not name:
         return None
     name_lower = name.lower().strip()
@@ -90,9 +84,6 @@ def normalize_category(name):
 _wp_category_cache = {}
 
 def get_wp_category_id(category_name, wp_url, auth_user, auth_password):
-    """
-    Retrieves or creates a taxonomy category inside WordPress and returns its unique ID.
-    """
     canonical_name = normalize_category(category_name)
     if not canonical_name:
         return None
@@ -141,15 +132,8 @@ def get_wp_category_id(category_name, wp_url, auth_user, auth_password):
     return None
 
 def generate_pexels_query_from_title(title):
-    """
-    Extracts descriptive nouns from the entire title context,
-    then strictly appends directives to guarantee high-quality professional
-    human faces discussing in an office meeting room, filtering out objects.
-    """
     clean_title = re.sub(r'[^a-zA-Z0-9\s]', ' ', title).lower()
     words = clean_title.split()
-    
-    # Extended list of non-visual, abstract, or jargon stop words to exclude
     stop_words = {
         'the', 'a', 'an', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
         'to', 'of', 'for', 'with', 'on', 'at', 'by', 'from', 'about', 'how', 'why', 'what', 'who',
@@ -163,29 +147,17 @@ def generate_pexels_query_from_title(title):
         'contact', 'scrabble', 'tiles', 'alphabet', 'letters', 'wood', 'wooden', 'keyboard', 'laptop',
         'phone', 'screen', 'hands', 'writing', 'desk', 'b2b', 'saas', 'linkedin', 'seo'
     }
-    
     context_words = [w for w in words if w not in stop_words and len(w) > 2]
-    
     if not context_words:
         context_words = ["business", "marketing", "corporate"]
-        
-    # Capture the core contextual descriptive terms from the entire title
     title_context = " ".join(context_words[:4])
-    
-    # STRICTLY append human face meeting room directives to eliminate hands, objects, and abstract wooden tiles
-    search_query = f"{title_context} professional business people faces discussing in meeting room"
-    return search_query.strip()
+    return f"{title_context} professional business people faces discussing in meeting room"
 
 def solve_dynamically_via_pexels(search_query):
-    """
-    Queries Pexels using max-pool sizes of 80 to ensure rich variety,
-    consulting a JSON registry to guarantee no image is ever repeated.
-    """
     if not PEXELS_API_KEY:
-        print("[ERROR] PEXELS_API_KEY missing from environment (.env). Skipping Pexels download.")
+        print("[ERROR] PEXELS_API_KEY missing. Skipping Pexels.")
         return None
 
-    # Track previously downloaded image IDs across scripts
     used_images_file = "used_pexels_images.json"
     used_ids = set()
     if os.path.exists(used_images_file):
@@ -196,62 +168,55 @@ def solve_dynamically_via_pexels(search_query):
             used_ids = set()
         
     url = "https://api.pexels.com/v1/search"
-    headers = {
-        "Authorization": PEXELS_API_KEY
-    }
-    params = {
-        "query": search_query,
-        "per_page": 80, # Maximized candidates pool to guarantee deduplication variety
-        "orientation": "landscape"
-    }
+    headers = {"Authorization": PEXELS_API_KEY}
 
-    try:
-        response = requests.get(url, headers=headers, params=params, timeout=25)
-        if response.status_code == 200:
-            data = response.json()
-            photos = data.get("photos", [])
-            
-            # Keep only the images that have never been used
-            fresh_photos = [p for p in photos if p["id"] not in used_ids]
-            
-            if fresh_photos:
-                # Randomly select a fresh image from the pool
-                selected_photo = random.choice(fresh_photos)
-                photo_id = selected_photo["id"]
-                image_url = selected_photo["src"]["large2x"]
-                print(f" - [Pexels] Selected fresh, unique image ID {photo_id} by: {selected_photo['photographer']}")
+    # Dynamic randomized page selection to guarantee distinct images for similar titles
+    base_page_offsets = list(range(1, 31))
+    random.shuffle(base_page_offsets)
+
+    for page_offset in base_page_offsets:
+        params = {
+            "query": search_query,
+            "per_page": 80,
+            "page": page_offset,
+            "orientation": "landscape"
+        }
+
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=25)
+            if response.status_code == 200:
+                data = response.json()
+                photos = data.get("photos", [])
                 
-                # Download bytes
-                img_resp = requests.get(image_url, timeout=40)
-                if img_resp.status_code == 200:
-                    # Update tracking database
-                    used_ids.add(photo_id)
-                    try:
-                        with open(used_images_file, "w") as f:
-                            json.dump(list(used_ids), f)
-                    except Exception as e:
-                        print(f" - [Warning] Failed to update used image tracking registry: {e}")
-                        
-                    return PILImage.open(BytesIO(img_resp.content)).convert("RGBA")
-            else:
-                print(" - [Pexels Warning] All 80 fetched images for this query are already used. Selecting first available.")
-                if photos:
-                    selected_photo = photos[0]
-                    img_resp = requests.get(selected_photo["src"]["large2x"], timeout=40)
+                fresh_photos = [p for p in photos if p["id"] not in used_ids]
+                
+                if fresh_photos:
+                    selected_photo = random.choice(fresh_photos)
+                    photo_id = selected_photo["id"]
+                    image_url = selected_photo["src"]["large2x"]
+                    print(f" - [Pexels] Selected unique image ID {photo_id} (Page {page_offset}) by: {selected_photo['photographer']}")
+                    
+                    img_resp = requests.get(image_url, timeout=40)
                     if img_resp.status_code == 200:
+                        used_ids.add(photo_id)
+                        try:
+                            with open(used_images_file, "w") as f:
+                                json.dump(list(used_ids), f)
+                        except Exception as e:
+                            print(f" - [Warning] Failed to update used image tracking registry: {e}")
+                            
                         return PILImage.open(BytesIO(img_resp.content)).convert("RGBA")
-                        
-            print(f" - [Warning] Pexels found no photos matching query: '{search_query}'.")
-        else:
-            print(f" - [Error] Pexels API handshake failed ({response.status_code})")
-    except Exception as e:
-        print(f" - [Fatal] Pexels connection failed: {e}")
+                else:
+                    print(f" - [Pexels Pagination] All 80 images on Page {page_offset} are used. Advancing to next page...")
+            else:
+                print(f" - [Error] Pexels API handshake failed ({response.status_code})")
+                break
+        except Exception as e:
+            print(f" - [Fatal] Pexels connection failed: {e}")
+            break
     return None
 
 def process_clean_landscape_banner(img, target_size=(1704, 923)):
-    """
-    Resizes and center-crops the downloaded photo to exactly 1704x923.
-    """
     target_w, target_h = target_size
     orig_w, orig_h = img.size
     aspect_target = target_w / target_h
@@ -273,9 +238,6 @@ def process_clean_landscape_banner(img, target_size=(1704, 923)):
     return img
 
 def upload_image_to_wordpress(img_buffer, slug_name):
-    """
-    Saves image bytes into the WordPress Media Gallery and registers a database asset ID.
-    """
     if not img_buffer:
         return None, None
     media_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/media"
@@ -292,18 +254,13 @@ def upload_image_to_wordpress(img_buffer, slug_name):
         if response.status_code == 201:
             media_data = response.json()
             return media_data["id"], media_data["source_url"]
-        print(f" - [Media Error] WordPress Upload status: {response.status_code} - {response.text}")
     except Exception as e:
         print(f" - [Media Error] Upload exception: {e}")
     return None, None
 
 def find_existing_post_id(post_slug, wp_endpoint, headers, auth_user, auth_password, wp_url=None):
-    """
-    Checks if a post with the given slug already exists on WordPress to update it instead of duplicating.
-    """
     if not post_slug:
         return None
-
     wp_url = wp_url or WP_URL
     check_endpoint = f"{wp_url.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}"
     try:
@@ -318,17 +275,11 @@ def find_existing_post_id(post_slug, wp_endpoint, headers, auth_user, auth_passw
             payload = check_resp.json()
             if isinstance(payload, list) and len(payload) > 0:
                 return payload[0].get("id")
-            if isinstance(payload, dict) and payload.get("id"):
-                return payload.get("id")
     except Exception as e:
         print(f" - [Warning] Error checking if slug '{post_slug}' exists on WP: {e}")
-
     return None
 
 def push_post_to_wordpress(page, keyword):
-    """
-    Prepares post parameters, downloads stock images dynamically, and uploads the draft.
-    """
     if not WP_URL or not WP_USER or not WP_APP_PASSWORD:
         print("[WARNING] WordPress credentials not complete. Skipping upload.")
         return False
@@ -343,10 +294,8 @@ def push_post_to_wordpress(page, keyword):
     
     wp_slug = page["slug"].strip("/").split("/")[-1] if "/" in page["slug"] else page["slug"]
 
-    # Generate Pexels Query and grab landscape image with strict corporate settings
     print(f" - [Dynamic Visualizer] Synthesizing Pexels query from title: '{page['title']}'...")
     pexels_query = generate_pexels_query_from_title(page['title'])
-    print(f" - [Pexels Query] Result: '{pexels_query}'")
     
     raw_photo = solve_dynamically_via_pexels(pexels_query)
     media_id, media_url = None, None
@@ -359,16 +308,9 @@ def push_post_to_wordpress(page, keyword):
         img_buffer.seek(0)
         media_id, media_url = upload_image_to_wordpress(img_buffer, wp_slug)
 
-    # Embed Hero image into content layout right after introduction text
-    intro_content = page["intro"]
-    if media_url:
-        image_html = f'\n<p><img src="{media_url}" alt="{page["title"]}" class="aligncenter size-full linksprig-featured-banner" width="1704" height="923" /></p>\n'
-        intro_content = intro_content + image_html
-
-    # Prepend dynamic, gap-less CSS to hide native WordPress titles and compress layout gaps
     theme_title_remover_css = (
         "<style>\n"
-        "  /* Programmatically hides native WordPress headers and collapses empty layout space */\n"
+        "  /* Programmatically hides native WordPress and Elementor headers */\n"
         "  .entry-title, .post-title, .page-title, h1.entry-title, h1.post-title, \n"
         "  .entry-header, .single-post .entry-title, .single-post h1.post-title, \n"
         "  .elementor-page-title, .page-header {\n"
@@ -377,23 +319,58 @@ def push_post_to_wordpress(page, keyword):
         "    padding: 0 !important;\n"
         "    height: 0 !important;\n"
         "    min-height: 0 !important;\n"
+        "    overflow: hidden !important;\n"
         "  }\n"
-        "  /* Collapse margins of the immediate parent containers */\n"
-        "  .entry-header, .page-header {\n"
-        "    margin-bottom: 0 !important;\n"
-        "    padding-bottom: 0 !important;\n"
+        "  /* Collapse margins/paddings of parent layout containers above the content */\n"
+        "  .entry-header, .page-header, .post-header, .hero-section {\n"
+        "    margin: 0 !important;\n"
+        "    padding: 0 !important;\n"
+        "    height: 0 !important;\n"
+        "    min-height: 0 !important;\n"
+        "  }\n"
+        "  /* Force zero-gap on main container elements and Elementor wraps */\n"
+        "  body.single .site-content, \n"
+        "  body.single .content-area, \n"
+        "  body.single #primary, \n"
+        "  body.single #main, \n"
+        "  body.single #content,\n"
+        "  body.single article, \n"
+        "  body.single .entry-content, \n"
+        "  body.single .post-content, \n"
+        "  body.single .post-inner,\n"
+        "  body.single .ast-container,\n"
+        "  body.single .elementor-section-wrap,\n"
+        "  body.single .elementor-page,\n"
+        "  body.single .post-wrap {\n"
+        "    padding-top: 0 !important;\n"
+        "    margin-top: 0 !important;\n"
+        "  }\n"
+        "  /* Remove top spacing directly from custom title */\n"
+        "  h1.linksprig-custom-title, \n"
+        "  .entry-content h1:first-of-type,\n"
+        "  .post-content h1:first-of-type,\n"
+        "  article h1:first-of-type {\n"
+        "    margin-top: 0 !important;\n"
+        "    padding-top: 20px !important;\n"
         "  }\n"
         "</style>\n"
     )
 
-    # Compile final HTML payload
+    # Clean body text and layout stacked purely inside python
     content_html = format_blog_html(
         title=page["title"],
-        intro_html=intro_content,
+        intro_html=page["intro"],
         body_sections=page["body_sections"],
         faqs_list=page["faqs"]
     )
-    final_post_content = theme_title_remover_css + f"<h1>{page['title']}</h1>\n" + content_html
+    
+    final_post_content = theme_title_remover_css
+    final_post_content += f"<h1 class='linksprig-custom-title'>{page['title']}</h1>\n"
+    
+    if media_url:
+        final_post_content += f'<p><img src="{media_url}" alt="{page["title"]}" class="aligncenter size-full linksprig-featured-banner" width="1704" height="923" /></p>\n'
+        
+    final_post_content += content_html
     
     cat_name = page.get("category", "")
     cat_id = get_wp_category_id(cat_name, WP_URL, WP_USER, WP_APP_PASSWORD) if cat_name else None
@@ -410,22 +387,11 @@ def push_post_to_wordpress(page, keyword):
             "_rank_math_focus_keyword": keyword
         }
     }
-    if cat_id:
-        payload["categories"] = [cat_id]
-    if media_id:
-        payload["featured_media"] = media_id
+    if cat_id: payload["categories"] = [cat_id]
+    if media_id: payload["featured_media"] = media_id
 
-    existing_post_id = find_existing_post_id(
-        wp_slug,
-        "posts",
-        headers,
-        WP_USER,
-        WP_APP_PASSWORD,
-        WP_URL,
-    )
-    if existing_post_id:
-        print(f" - [Updating] Existing post found for slug '{wp_slug}' (ID: {existing_post_id})")
-
+    existing_post_id = find_existing_post_id(wp_slug, "posts", headers, WP_USER, WP_APP_PASSWORD, WP_URL)
+    
     max_retries = 3
     backoff_factor = 2
     for attempt in range(max_retries):
@@ -439,19 +405,15 @@ def push_post_to_wordpress(page, keyword):
                 
             if response.status_code in (200, 201):
                 action = "updated" if existing_post_id else "created"
-                print(f" - [Success] WordPress Draft {action} with automatic face-only Pexels cover photo!")
+                print(f" - [Success] WordPress Draft {action} with identical featured/hero visual banner!")
                 db_helper.register_slug(page["slug"])
                 return True
-            print(f" - [Error] Failed to upload: {response.status_code} - {response.text}")
         except Exception as e:
             print(f" - [Error] Unexpected exception: {e}")
             break
         time.sleep(backoff_factor ** attempt)
 
 def generate_blog_post(topic, keyword):
-    """
-    Generates structured SEO contents using Gemini.
-    """
     print(f"\n[AI Writing] Topic: {topic} | Focus Keyword: {keyword}")
     system_instruction = (
         "You are a premium B2B SaaS content writer specializing in LinkedIn outreach and lead generation for LinkSprig.\n"
@@ -552,17 +514,13 @@ def generate_blog_post(topic, keyword):
                 )
                 text = response.text.strip()
                 
-            if text.startswith("```json"): 
-                text = text[7:]
-            if text.endswith("```"): 
-                text = text[:-3]
+            if text.startswith("```json"): text = text[7:]
+            if text.endswith("```"): text = text[:-3]
             result = json.loads(text.strip())
-            if not result.get("slug"): 
-                result["slug"] = clean_slug(topic)
+            if not result.get("slug"): result["slug"] = clean_slug(topic)
             return result
         except Exception as e:
-            if attempt == max_retries - 1: 
-                return {"error": str(e)}
+            if attempt == max_retries - 1: return {"error": str(e)}
             time.sleep(2)
 
 def main():
@@ -571,14 +529,11 @@ def main():
         excel_path = r"C:\Users\ARNAV\Downloads\LinkSprig-Blogs-Topics-Keywords-22ndMay'26.xlsx"
         
     csv_output_path = os.path.join("output", "excel_blogs_export.csv")
-    if not os.path.exists(excel_path): 
-        print(f"[ERROR] Source Excel sheet not found at path: {excel_path}")
-        return
+    if not os.path.exists(excel_path): return
         
     try: 
         xl = pd.ExcelFile(excel_path)
-    except Exception as e: 
-        print(f"[ERROR] Failed to read Excel workbook layout: {e}")
+    except Exception: 
         return
 
     all_pages = []
@@ -627,7 +582,6 @@ def main():
         generated_slugs = set()
             
     rows_for_csv = []
-    
     for idx, page in enumerate(all_pages):
         topic, keyword, slug = page["title"], page["keyword"], page["slug"]
         leaf_slug = slug.strip("/").split("/")[-1]
