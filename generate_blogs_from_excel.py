@@ -525,7 +525,12 @@ def push_post_to_wordpress(page, keyword):
                 print(f" - [Success] WordPress Draft {action} with identical featured/hero visual banner!")
                 db_helper.register_slug(page["slug"])
                 return True
-            elif response.status_code == 429:
+            
+            # Check if post was actually created despite error response
+            if not existing_post_id and isinstance(response.json(), dict) and response.json().get("id"):
+                existing_post_id = response.json().get("id")
+
+            if response.status_code == 429:
                 sleep_time = (attempt + 1) * 8
                 print(f" - [Post Rate Limit] 429 Too Many Requests. Retrying in {sleep_time}s...")
                 time.sleep(sleep_time)
@@ -533,6 +538,10 @@ def push_post_to_wordpress(page, keyword):
             elif response.status_code == 403:
                 print(f" - [Warning] 403 Meta Permission error. Retrying post upload without restricted meta fields...")
                 payload.pop("meta", None)
+                if not existing_post_id:
+                    created_id = find_existing_post_id(wp_slug, "posts", headers, WP_USER, WP_APP_PASSWORD, WP_URL)
+                    if created_id:
+                        existing_post_id = created_id
                 continue
             else:
                 print(f" - [Error] WordPress Post Upload status: {response.status_code} - {response.text}")

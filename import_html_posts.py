@@ -229,6 +229,10 @@ def push_posts_to_wordpress(rows):
                 elif response.status_code == 403:
                     print(f" - [Warning] 403 Meta Permission error. Retrying post upload without restricted meta fields...")
                     payload.pop("meta", None)
+                    if not existing_post_id:
+                        created_id = find_existing_post_id(wp_slug, wp_endpoint, headers, WP_USER, WP_APP_PASSWORD, WP_URL)
+                        if created_id:
+                            existing_post_id = created_id
                     continue
                 elif response.status_code == 401:
                     print(f" - [Error] 401 Unauthorized. Check your credentials.")
