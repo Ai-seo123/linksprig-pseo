@@ -98,7 +98,7 @@ class AIWriter:
     def _prepare_generation_context(self, post_type, entity_data):
         """Prepare specific prompt, system instructions, and schema for the target post type."""
         
-        # Base system instruction enforcing the pSEO content guidelines
+        # Base system instruction enforcing the pSEO content guidelines and the strict 2026 mandate
         system_instruction = (
             "You are a premium SEO content copywriter specializing in Product-Led SEO for LinkSprig (a modern link-building outreach automation tool).\n"
             "Your writing style is professional, data-driven, highly tactical (featuring actionable workflows), and authoritative.\n"
@@ -108,7 +108,7 @@ class AIWriter:
             "3. Structure all body sections using clean HTML tags (e.g. <p>, <ul>, <li>, <strong>, <h3>) for rich layouts. Do NOT wrap headings in <h1> or <h2>, start sub-headings with <h3>. You MUST include at least one bulleted (<ul>, <li>) or ordered list in every single page to satisfy readability checks.\n"
             "4. Follow the templates strictly.\n"
             "5. Ensure metadata is compelling for click-through rate (CTR) optimization.\n"
-            "6. You MUST include real-world statistics, metrics, or performance numbers using percent symbols (%) or currency symbols ($), and include a reference to a recent year (e.g., 2026) to establish strong EEAT.\n"
+            "6. You MUST include real-world statistics, metrics, or performance numbers using percent symbols (%) or currency symbols ($).\n"
             "7. Every single section in body_sections MUST have a minimum of 110 to 130 words of content to avoid thin section rejection and satisfy the 500-word page limit.\n"
             "8. Ensure the output is a fully complete and valid JSON payload according to the schema. Do not output truncated or invalid JSON.\n"
             "9. You MUST include a 'category' field containing exactly one of these five categories (must match the canonical name exactly):\n"
@@ -117,7 +117,8 @@ class AIWriter:
             "   - Category C — Role-Specific Outreach Guides\n"
             "   - Category D — Message Templates & Copywriting\n"
             "   - Category E — Lead Generation & Pipeline Building\n"
-            "10. CRITICAL FOR JSON VALIDITY: Use single quotes for all HTML attributes (e.g. <a href='...'> or <span style='...'>) and avoid raw double quotes inside the text. If you must use double quotes, they MUST be escaped with a backslash (\\\")."
+            "10. CRITICAL FOR JSON VALIDITY: Use single quotes for all HTML attributes (e.g. <a href='...'> or <span style='...'>) and avoid raw double quotes inside the text. If you must use double quotes, they MUST be escaped with a backslash (\\\").\n"
+            "11. YEAR UPGRADE MANDATE: Always scan all incoming topics, competitor metrics, industry years, and context fields for any outdated years (e.g., '2024' or '2025') and dynamically upgrade them to '2026' in all generated fields, including 'title', 'meta_title', 'meta_description', 'h1', 'intro', 'body_sections', and 'faqs'. Never output '2024' or '2025' anywhere; always output '2026' to establish fresh authority."
         )
         
         # Define dynamic acf_fields properties based on post_type
@@ -174,7 +175,7 @@ class AIWriter:
             - SEO_challenge: "The primary challenge of building links for '{entity_data['industry']}'"
             - outreach_problem: "Why '{entity_data['pain']}' makes outreach hard"
             - relevant_feature: "{entity_data['feature']}"
-            - success_metric: "A measurable metric (e.g. 15% reply rate or +10 DR growth in 60 days)"
+            - success_metric: "A measurable metric (e.g. 15% reply rate or +10 DR growth in 2026)"
             """
             
         elif post_type == "problem":
@@ -211,7 +212,7 @@ class AIWriter:
 
             In the acf_fields output, populate these fields:
             - use_case_name: "{entity_data['use_case']}"
-            - why_it_matters: "Why this outreach method is crucial for DR growth"
+            - why_it_matters: "Why this outreach method is crucial for DR growth in 2026"
             - target_audience: "SEO managers, agencies, and content teams"
             - key_workflow: "Brief 3-step description of the campaign setup"
             - benefits: "Scale, personalization, automatic follow-ups"
@@ -429,7 +430,7 @@ class AIWriter:
             uc = entity_data['use_case']
             slug = f"{clean_slug(uc)}-outreach-tool"
             return {
-                "title": f"The Best {uc} Tool for Modern SEO Teams",
+                "title": f"The Best {uc} Tool for Modern SEO Teams in 2026",
                 "meta_title": f"How to Automate {uc} Campaigns",
                 "meta_description": f"Learn how to build a scalable {uc} process. See how LinkSprig automates this campaign workflow to maximize links.",
                 "slug": slug,
@@ -471,7 +472,7 @@ class AIWriter:
             gd = entity_data['guide']
             slug = clean_slug(gd)
             return {
-                "title": f"How to {gd}: A Step-by-Step Outreach Guide",
+                "title": f"How to {gd}: A Step-by-Step Outreach Guide in 2026",
                 "meta_title": f"Step-by-Step Guide: How to {gd}",
                 "meta_description": f"Master the art of outreach. Follow our detailed tutorial to learn how to {gd} like a pro using modern SEO tools.",
                 "slug": slug,
