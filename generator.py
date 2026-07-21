@@ -25,6 +25,7 @@ WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD", "")
 WP_POST_STATUS = os.getenv("WP_POST_STATUS", "draft").lower()
 RUN_QA_VALIDATOR = os.getenv("RUN_QA_VALIDATOR", "True").lower() == "true"
 DAILY_PAGES_GOAL = int(os.getenv("DAILY_PAGES_GOAL", "50"))
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 
 import re
 

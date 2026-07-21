@@ -28,6 +28,7 @@ WP_USER = os.getenv("WP_USER", "")
 WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD", "")
 WP_POST_STATUS = os.getenv("WP_POST_STATUS", "draft").lower()
 EXPORT_MODE = os.getenv("EXPORT_MODE", "both").lower()
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 
 if API_KEY:
     genai.configure(api_key=API_KEY)
