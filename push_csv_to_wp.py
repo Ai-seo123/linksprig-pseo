@@ -245,6 +245,8 @@ def push_csv_to_wp():
         "guide": ["guide_title", "difficulty_level", "time_required", "key_takeaways", "steps"]
     }
     
+    successful_count = 0
+    
     for idx, row in enumerate(rows):
         post_title = row.get("post_title")
         post_slug = row.get("post_slug")
@@ -254,11 +256,6 @@ def push_csv_to_wp():
             
         wp_slug = post_slug.strip("/").split("/")[-1] if "/" in post_slug else post_slug
         
-        # Check multiple formats against registry
-        if post_slug in generated_slugs or wp_slug in generated_slugs or f"/{wp_slug}/" in generated_slugs or f"/blog/{wp_slug}" in generated_slugs:
-            print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already in registry: {post_slug}")
-            continue
-            
         post_content = row.get("post_content")
         post_type = row.get("post_type") or "post"
         meta_title = row.get("meta_title")
@@ -376,6 +373,7 @@ def push_csv_to_wp():
                     # Incrementally save successful slug
                     db_helper.register_slug(post_slug)
                     db_helper.register_slug(wp_slug)
+                    successful_count += 1
                     success = True
                     break
                 elif response.status_code == 404:
@@ -400,7 +398,9 @@ def push_csv_to_wp():
         if not success:
             print(f" - [FAILED] Could not push '{post_title}' to WordPress.")
             
-    print("\n[INFO] Successful uploads registered incrementally.")
+    print(f"\n[INFO] Successfully uploaded {successful_count}/{len(rows)} posts.")
+    if successful_count == 0 and len(rows) > 0:
+        raise RuntimeError(f"Failed to upload any CSV posts to WordPress ({successful_count}/{len(rows)} uploaded)")
             
     print("\n[SUCCESS] Push operation finished.")
 

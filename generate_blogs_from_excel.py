@@ -700,10 +700,41 @@ def main():
         generated_slugs = set()
             
     rows_for_csv = []
+    uploaded_count = 0
+    
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
     for idx, page in enumerate(all_pages):
-        topic, keyword, slug = page["title"], page["keyword"], page["slug"]
+        topic = page["title"]
+        keyword = page["keyword"]
+        slug = page["slug"]
         leaf_slug = slug.strip("/").split("/")[-1]
-        if slug in generated_slugs or leaf_slug in generated_slugs: continue
+
+        # Check if already exists on WordPress API by slug if credentials configured
+        already_on_wp = False
+        if WP_URL and WP_USER and WP_APP_PASSWORD:
+            try:
+                check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
+                check_resp = requests.get(
+                    check_endpoint,
+                    params={"slug": leaf_slug, "status": "any"},
+                    auth=(WP_USER, WP_APP_PASSWORD),
+                    headers=headers,
+                    timeout=10
+                )
+                if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
+                    print(f"[{idx+1}/{len(all_pages)}] Slug already exists on WordPress: {leaf_slug}")
+                    db_helper.register_slug(slug)
+                    db_helper.register_slug(leaf_slug)
+                    already_on_wp = True
+            except Exception as e:
+                print(f" - [Warning] Error checking WP slug '{leaf_slug}': {e}")
+
+        if already_on_wp:
+            continue
             
         page_data = generate_blog_post(topic, keyword)
         if not page_data or "error" in page_data: continue
@@ -716,11 +747,28 @@ def main():
         page_data["body_sections"] = injected_sections
         
         content_html = format_blog_html(title=page_data["title"], intro_html=page_data["intro"], body_sections=page_data["body_sections"], faqs_list=page_data["faqs"])
-        rows_for_csv.append({"post_title": page_data["title"], "post_slug": page_data["slug"], "post_content": content_html, "post_status": "draft", "post_type": "post", "category": page_data.get("category", ""), "focus_keyword": keyword, "meta_title": page_data["meta_title"], "meta_description": page_data["meta_description"]})
+        csv_row = {
+            "post_title": page_data["title"],
+            "post_slug": page_data["slug"],
+            "post_content": content_html,
+            "post_status": "draft",
+            "post_type": "post",
+            "category": page_data.get("category", ""),
+            "focus_keyword": keyword,
+            "meta_title": page_data["meta_title"],
+            "meta_description": page_data["meta_description"]
+        }
+        rows_for_csv.append(csv_row)
         
-        if EXPORT_MODE in ["wp_api", "both"]: 
-            push_post_to_wordpress(page_data, keyword)
-        else: 
+        # Upload directly to WordPress
+        if EXPORT_MODE in ["wp_api", "both"]:
+            success = push_post_to_wordpress(page_data, keyword)
+            if success:
+                uploaded_count += 1
+                generated_slugs.add(slug)
+                generated_slugs.add(leaf_slug)
+        else:
+            # If CSV only, immediately register incrementally
             db_helper.register_slug(page_data["slug"])
         time.sleep(1)
         
@@ -734,6 +782,13 @@ def main():
             out_df.to_csv(csv_output_path, mode='a', header=False, index=False, encoding="utf-8")
         else: 
             out_df.to_csv(csv_output_path, index=False, encoding="utf-8")
+        print(f"[SUCCESS] CSV Export appended at: {csv_output_path}")
+        
+    if EXPORT_MODE in ["wp_api", "both"] and uploaded_count == 0 and len(rows_for_csv) > 0:
+        raise RuntimeError(f"Failed to upload any generated posts from Excel to WordPress ({uploaded_count}/{len(rows_for_csv)} uploaded)")
+
+    print("\n[INFO] Successful uploads registered incrementally.")
+    print("\n[SUCCESS] Pipeline execution finished.")
 
 if __name__ == "__main__":
     main()

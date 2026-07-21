@@ -147,6 +147,7 @@ def push_posts_to_wordpress(rows):
         generated_slugs = set()
         
     successful_count = 0
+    existing_count = 0
     
     for idx, row in enumerate(rows):
         post_slug = row.get("post_slug")
@@ -155,11 +156,6 @@ def push_posts_to_wordpress(rows):
             
         wp_slug = post_slug.strip("/").split("/")[-1] if "/" in post_slug else post_slug
         
-        # Check multiple formats against registry
-        if post_slug in generated_slugs or wp_slug in generated_slugs or f"/{wp_slug}/" in generated_slugs or f"/blog/{wp_slug}" in generated_slugs:
-            print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already in registry: {post_slug}")
-            continue
-            
         # Check if post already exists on WordPress API by slug
         try:
             check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
@@ -168,18 +164,17 @@ def push_posts_to_wordpress(rows):
                 params={"slug": wp_slug, "status": "any"},
                 auth=(WP_USER, WP_APP_PASSWORD),
                 headers=headers,
-                timeout=10
+                timeout=30
             )
             if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
                 print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already exists on WordPress: {wp_slug}")
                 db_helper.register_slug(post_slug)
                 db_helper.register_slug(wp_slug)
+                existing_count += 1
                 continue
         except Exception as e:
             print(f" - [Warning] Error checking if slug '{wp_slug}' exists on WP: {e}")
-            # Resilient WP API Check: Safely skip this post instead of uploading duplicate
-            print(f" - [Skipping {idx+1}/{len(rows)}] Skipping '{post_slug}' due to WP check error to prevent duplication.")
-            continue
+            print(f" - [Attempting Upload {idx+1}/{len(rows)}] Proceeding with upload for '{post_slug}'.")
             
         cat_name = row.get("category", "")
         cat_id = get_wp_category_id(cat_name, WP_URL, WP_USER, WP_APP_PASSWORD) if cat_name else None
@@ -220,7 +215,7 @@ def push_posts_to_wordpress(rows):
                     json=payload,
                     auth=(WP_USER, WP_APP_PASSWORD),
                     headers=headers,
-                    timeout=15
+                    timeout=30
                 )
                 
                 if response.status_code == 201:
@@ -250,7 +245,9 @@ def push_posts_to_wordpress(rows):
         if not success:
             print(f" - [FAILED] Could not push '{row['post_title']}' to WordPress.")
             
-    print(f"\n[SUCCESS] Push complete. Successfully uploaded {successful_count}/{len(rows)} posts.")
+    print(f"\n[SUCCESS] Push complete. {successful_count} newly uploaded, {existing_count} already existed on WordPress ({successful_count + existing_count}/{len(rows)} accounted for).")
+    if (successful_count + existing_count) < len(rows):
+        raise RuntimeError(f"Failed to account for all posts on WordPress ({successful_count + existing_count}/{len(rows)} processed)")
 
 def main():
     if not os.path.exists(html_path):
