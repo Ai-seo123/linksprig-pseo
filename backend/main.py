@@ -12,9 +12,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from auth import verify_password, create_access_token, verify_captcha, get_current_user
-from config import ADMIN_PASSWORD_HASH
-from topic_generator import generate_topics
+from .auth import verify_password, create_access_token, verify_captcha, get_current_user
+from .config import ADMIN_PASSWORD_HASH
+from .topic_generator import generate_topics
 
 app = FastAPI(title="LinkSprig API", version="1.0.0")
 
