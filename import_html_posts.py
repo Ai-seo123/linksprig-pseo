@@ -226,6 +226,10 @@ def push_posts_to_wordpress(rows):
                     successful_count += 1
                     success = True
                     break
+                elif response.status_code == 403:
+                    print(f" - [Warning] 403 Meta Permission error. Retrying post upload without restricted meta fields...")
+                    payload.pop("meta", None)
+                    continue
                 elif response.status_code == 401:
                     print(f" - [Error] 401 Unauthorized. Check your credentials.")
                     break

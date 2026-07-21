@@ -90,7 +90,7 @@ def get_wp_category_id(category_name, wp_url, auth_user, auth_password):
     try:
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         auth_str = f"{auth_user}:{auth_password}"
         b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
@@ -241,18 +241,27 @@ def upload_image_to_wordpress(img_buffer, slug_name):
     headers = {
         "Content-Disposition": f"attachment; filename={slug_name}-featured.jpg",
         "Content-Type": "image/jpeg",
-        "User-Agent": "Mozilla/5.0"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     auth_str = f"{WP_USER}:{WP_APP_PASSWORD}"
     b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
     headers["X-HTTP-Authorization"] = f"Basic {b64_auth}"
-    try:
-        response = requests.post(media_endpoint, auth=(WP_USER, WP_APP_PASSWORD), headers=headers, data=img_buffer.getvalue(), timeout=25)
-        if response.status_code == 201:
-            media_data = response.json()
-            return media_data["id"], media_data["source_url"]
-    except Exception as e:
-        print(f" - [Media Error] WordPress Upload Exception: {e}")
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(media_endpoint, auth=(WP_USER, WP_APP_PASSWORD), headers=headers, data=img_buffer.getvalue(), timeout=30)
+            if response.status_code == 201:
+                media_data = response.json()
+                return media_data["id"], media_data["source_url"]
+            elif response.status_code == 429:
+                wait_time = (attempt + 1) * 5
+                print(f" - [Media Rate Limit] 429 Too Many Requests. Waiting {wait_time}s before retry...")
+                time.sleep(wait_time)
+                continue
+            print(f" - [Media Error] WordPress Upload Status: {response.status_code} - {response.text}")
+        except Exception as e:
+            print(f" - [Media Error] WordPress Upload Exception: {e}")
     return None, None
 
 class PSEOEngine:
@@ -487,7 +496,7 @@ class PSEOEngine:
         
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         auth_str = f"{WP_USER}:{WP_APP_PASSWORD}"
         b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")

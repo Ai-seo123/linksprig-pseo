@@ -1,5 +1,6 @@
 import os
 import json
+import requests
 import pandas as pd
 import time
 import db_helper
