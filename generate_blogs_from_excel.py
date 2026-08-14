@@ -740,6 +740,10 @@ def main():
         slug = page["slug"]
         leaf_slug = slug.strip("/").split("/")[-1]
 
+        # Check against database first to avoid duplicate work and API calls
+        if slug in generated_slugs or leaf_slug in generated_slugs:
+            print(f"[{idx+1}/{len(all_pages)}] Slug already registered in database: {leaf_slug}")
+            continue
         # Check if already exists on WordPress API by slug if credentials configured
         already_on_wp = False
         if WP_URL and WP_USER and WP_APP_PASSWORD:

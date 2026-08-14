@@ -256,6 +256,11 @@ def push_csv_to_wp():
             
         wp_slug = post_slug.strip("/").split("/")[-1] if "/" in post_slug else post_slug
         
+        # Check against local database/registry first to prevent duplicates
+        if post_slug in generated_slugs or wp_slug in generated_slugs:
+            print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already registered in database: {wp_slug}")
+            continue
+        
         post_content = row.get("post_content")
         post_type = row.get("post_type") or "post"
         meta_title = row.get("meta_title")
