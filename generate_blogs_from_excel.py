@@ -357,6 +357,16 @@ def upload_image_to_wordpress(img_buffer, slug_name):
             print(f" - [Media Error] Upload exception: {e}")
     return None, None
 
+_last_upload_error = ""
+
+def get_last_upload_error():
+    global _last_upload_error
+    return _last_upload_error
+
+def set_last_upload_error(msg):
+    global _last_upload_error
+    _last_upload_error = str(msg)
+
 def find_existing_post_id(post_slug, wp_endpoint, headers, auth_user, auth_password, wp_url=None):
     """
     Checks if a post with the given slug already exists on WordPress to update it instead of duplicating.
@@ -367,11 +377,19 @@ def find_existing_post_id(post_slug, wp_endpoint, headers, auth_user, auth_passw
     wp_url = wp_url or WP_URL
     leaf_slug = str(post_slug).strip("/").split("/")[-1]
     check_endpoint = f"{wp_url.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}"
-    valid_statuses = "publish,draft,pending,private,future"
+    
+    # 1. Try multi-status query with PHP array syntax
     try:
         check_resp = requests.get(
             check_endpoint,
-            params={"slug": leaf_slug, "status": valid_statuses},
+            params=[
+                ("slug", leaf_slug),
+                ("status[]", "publish"),
+                ("status[]", "draft"),
+                ("status[]", "pending"),
+                ("status[]", "private"),
+                ("status[]", "future")
+            ],
             auth=(auth_user, auth_password),
             headers=headers,
             timeout=15,
@@ -383,28 +401,31 @@ def find_existing_post_id(post_slug, wp_endpoint, headers, auth_user, auth_passw
             if isinstance(payload, dict) and payload.get("id"):
                 return payload.get("id")
         elif check_resp.status_code == 400:
-            # Fallback without status parameter if endpoint enforces custom status filter
-            fallback_resp = requests.get(
-                check_endpoint,
-                params={"slug": leaf_slug},
-                auth=(auth_user, auth_password),
-                headers=headers,
-                timeout=15,
-            )
-            if fallback_resp.status_code == 200:
-                payload = fallback_resp.json()
-                if isinstance(payload, list) and len(payload) > 0:
-                    return payload[0].get("id")
-                if isinstance(payload, dict) and payload.get("id"):
-                    return payload.get("id")
+            # Fallback for WordPress setups that only accept single status per query
+            for st in ["draft", "publish", "pending"]:
+                fallback_resp = requests.get(
+                    check_endpoint,
+                    params={"slug": leaf_slug, "status": st},
+                    auth=(auth_user, auth_password),
+                    headers=headers,
+                    timeout=10,
+                )
+                if fallback_resp.status_code == 200:
+                    payload = fallback_resp.json()
+                    if isinstance(payload, list) and len(payload) > 0:
+                        return payload[0].get("id")
+                    if isinstance(payload, dict) and payload.get("id"):
+                        return payload.get("id")
     except Exception as e:
         print(f" - [Warning] Error checking if slug '{leaf_slug}' exists on WP: {e}")
 
     return None
 
 def push_post_to_wordpress(page, keyword):
+    global _last_upload_error
     if not WP_URL or not WP_USER or not WP_APP_PASSWORD:
-        print("[WARNING] WordPress credentials not complete. Skipping upload.")
+        _last_upload_error = "WordPress credentials incomplete: WP_URL, WP_USER, or WP_APP_PASSWORD is not set in environment."
+        print(f"[WARNING] {_last_upload_error} Skipping upload.")
         return False
         
     headers = {
@@ -513,7 +534,6 @@ def push_post_to_wordpress(page, keyword):
         "slug": wp_slug,
         "content": final_post_content,
         "status": WP_POST_STATUS,
-        "type": "post",
         "meta": {
             "_rank_math_title": clean_meta_title,
             "_rank_math_description": clean_meta_desc,
@@ -533,6 +553,10 @@ def push_post_to_wordpress(page, keyword):
             if existing_post_id:
                 endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts/{existing_post_id}"
                 response = requests.put(endpoint, json=payload, auth=(WP_USER, WP_APP_PASSWORD), headers=headers, timeout=35)
+                # If server blocks PUT (405 Method Not Allowed or 501), retry with POST and method override header
+                if response.status_code in (405, 501):
+                    override_headers = {**headers, "X-HTTP-Method-Override": "PUT"}
+                    response = requests.post(endpoint, json=payload, auth=(WP_USER, WP_APP_PASSWORD), headers=override_headers, timeout=35)
             else:
                 endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
                 response = requests.post(endpoint, json=payload, auth=(WP_USER, WP_APP_PASSWORD), headers=headers, timeout=35)
@@ -543,26 +567,52 @@ def push_post_to_wordpress(page, keyword):
                 db_helper.register_slug(page["slug"])
                 return True
             
-            # Check if post was actually created despite error response
-            if not existing_post_id and isinstance(response.json(), dict) and response.json().get("id"):
-                existing_post_id = response.json().get("id")
+            # Safely parse response JSON without throwing if HTML error is returned
+            try:
+                resp_data = response.json() if response.content else {}
+            except Exception:
+                resp_data = {}
+
+            err_msg = ""
+            if isinstance(resp_data, dict):
+                err_msg = resp_data.get("message") or resp_data.get("code") or (response.text[:200] if response.text else "")
+            else:
+                err_msg = response.text[:200] if response.text else ""
 
             if response.status_code == 429:
                 sleep_time = (attempt + 1) * 8
                 print(f" - [Post Rate Limit] 429 Too Many Requests. Retrying in {sleep_time}s...")
                 time.sleep(sleep_time)
                 continue
-            elif response.status_code == 403:
-                print(f" - [Warning] 403 Meta Permission error. Retrying post upload without restricted meta fields...")
-                payload.pop("meta", None)
+            elif response.status_code == 401:
+                _last_upload_error = f"HTTP 401 Unauthorized: Invalid WordPress credentials for user '{WP_USER}'. Please verify WP_APP_PASSWORD."
+                print(f" - [Error] {_last_upload_error}")
+                if attempt >= 1:
+                    return False
+            elif response.status_code in (400, 403):
+                # Check if post was actually created in DB despite meta or other failure
                 if not existing_post_id:
                     created_id = find_existing_post_id(wp_slug, "posts", headers, WP_USER, WP_APP_PASSWORD, WP_URL)
                     if created_id:
                         existing_post_id = created_id
-                continue
+
+                # Progressively strip non-essential fields that could trigger 400 or 403
+                if "meta" in payload:
+                    print(f" - [Warning] HTTP {response.status_code} ({err_msg}). Retrying post upload without meta fields...")
+                    payload.pop("meta", None)
+                    continue
+                elif "categories" in payload:
+                    print(f" - [Warning] HTTP {response.status_code} ({err_msg}). Retrying post upload without categories...")
+                    payload.pop("categories", None)
+                    continue
+                else:
+                    _last_upload_error = f"HTTP {response.status_code}: {err_msg}"
+                    print(f" - [Error] WordPress Post Upload status: {response.status_code} - {err_msg}")
             else:
-                print(f" - [Error] WordPress Post Upload status: {response.status_code} - {response.text}")
+                _last_upload_error = f"HTTP {response.status_code}: {err_msg}"
+                print(f" - [Error] WordPress Post Upload status: {response.status_code} - {err_msg}")
         except Exception as e:
+            _last_upload_error = f"Post upload exception: {e}"
             print(f" - [Error] Post upload exception: {e}")
         time.sleep(2 * (attempt + 1))
     return False

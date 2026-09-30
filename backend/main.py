@@ -121,17 +121,33 @@ def process_uploaded_file(file_path: str, filename: str):
         except subprocess.CalledProcessError as e:
             err_output = (e.stderr or "").strip()
             out_output = (e.stdout or "").strip()
-            error_details = err_output if err_output else out_output
-            
-            if not error_details:
-                error_details = f"Script failed with exit code {e.returncode}"
+
+            # Search stdout and stderr for actionable error messages
+            meaningful_lines = []
+            for line in (out_output + "\n" + err_output).splitlines():
+                line_s = line.strip()
+                if any(tag in line_s for tag in ["[Error]", "[WARNING]", "WordPress Post Upload status:", "Details:", "Unauthorized", "Forbidden", "Bad Request", "RuntimeError:"]):
+                    # Clean out Python traceback prefix if present
+                    clean_line = re.sub(r'^[a-zA-Z0-9_.]*RuntimeError:\s*', '', line_s)
+                    meaningful_lines.append(clean_line)
+
+            if meaningful_lines:
+                error_details = meaningful_lines[-1]
+            elif err_output:
+                tb_lines = [l.strip() for l in err_output.splitlines() if l.strip()]
+                error_details = tb_lines[-1] if tb_lines else err_output
             else:
-                if len(error_details) > 400:
-                    error_details = "..." + error_details[-397:]
+                error_details = out_output if out_output else f"Script failed with exit code {e.returncode}"
+
+            if len(error_details) > 400:
+                error_details = "..." + error_details[-397:]
+
             db_helper.update_job_status(filename, "failed", error_details)
-            print(f"Error executing {script_to_run}: {e}")
+            print(f"Error executing {script_to_run}: {error_details}")
             if e.stderr:
                 print(f"Stderr:\n{e.stderr}")
+            if e.stdout:
+                print(f"Stdout:\n{e.stdout}")
         except Exception as e:
             db_helper.update_job_status(filename, "failed", str(e))
             print(f"Error executing {script_to_run}: {e}")

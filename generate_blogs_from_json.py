@@ -9,7 +9,7 @@ from formatter import format_blog_html
 from generate_blogs_from_excel import (
     clean_slug, normalize_category, generate_blog_post, 
     push_post_to_wordpress, EXPORT_MODE, WP_POST_STATUS,
-    find_existing_post_id
+    find_existing_post_id, get_last_upload_error
 )
 
 def main():
@@ -192,7 +192,8 @@ def main():
         print(f"[SUCCESS] CSV Export appended at: {csv_output_path}")
 
     if EXPORT_MODE in ["wp_api", "both"] and uploaded_count == 0 and len(rows_for_csv) > 0:
-        raise RuntimeError(f"Failed to upload any generated posts from JSON to WordPress ({uploaded_count}/{len(rows_for_csv)} uploaded)")
+        last_err = get_last_upload_error() or "WordPress REST API rejected post upload"
+        raise RuntimeError(f"Failed to upload any generated posts from JSON to WordPress (0/{len(rows_for_csv)} uploaded). Details: {last_err}")
 
     print("\n[INFO] Successful uploads registered incrementally.")
     print("\n[SUCCESS] Pipeline execution finished.")

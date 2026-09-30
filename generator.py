@@ -679,6 +679,9 @@ class PSEOEngine:
                     if existing_post_id:
                         endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}/{existing_post_id}"
                         response = requests.put(endpoint, json=payload, auth=(WP_USER, WP_APP_PASSWORD), headers=headers, timeout=20)
+                        if response.status_code in (405, 501):
+                            override_headers = {**headers, "X-HTTP-Method-Override": "PUT"}
+                            response = requests.post(endpoint, json=payload, auth=(WP_USER, WP_APP_PASSWORD), headers=override_headers, timeout=20)
                     else:
                         endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}"
                         response = requests.post(endpoint, json=payload, auth=(WP_USER, WP_APP_PASSWORD), headers=headers, timeout=20)
