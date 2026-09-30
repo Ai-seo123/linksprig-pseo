@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { UploadCloud, CheckCircle, XCircle, LogOut, Loader2, Sparkles, Download, Send } from 'lucide-react';
+import { UploadCloud, CheckCircle, XCircle, LogOut, Loader2, Sparkles, Download, Send, Trash2, RotateCcw } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL !== undefined && import.meta.env.VITE_API_URL !== ''
   ? import.meta.env.VITE_API_URL 
@@ -11,6 +11,10 @@ const Dashboard = ({ token, onLogout }) => {
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [statusMap, setStatusMap] = useState({});
+
+  // Duplicate Cleanup state
+  const [cleanupStats, setCleanupStats] = useState(null);
+  const [triggeringCleanup, setTriggeringCleanup] = useState(false);
 
   // Idea Generation state
   const [promptText, setPromptText] = useState('');
@@ -180,6 +184,63 @@ const Dashboard = ({ token, onLogout }) => {
     }
   };
 
+  const triggerCleanup = async (reset = false) => {
+    const jobName = 'cleanup_wp_duplicates.py';
+    setTriggeringCleanup(true);
+    setStatusMap(prev => ({
+      ...prev,
+      [jobName]: { state: 'queued', message: 'Queued 500-post cleanup batch...' }
+    }));
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/cleanup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ reset })
+      });
+
+      if (response.status === 401) {
+        onLogout();
+        return;
+      }
+
+      const data = await response.json();
+      if (!response.ok) {
+        setStatusMap(prev => ({
+          ...prev,
+          [jobName]: { state: 'error', message: data.detail || 'Cleanup failed to start' }
+        }));
+      }
+      fetchCleanupStats();
+    } catch (err) {
+      setStatusMap(prev => ({
+        ...prev,
+        [jobName]: { state: 'error', message: 'Network error triggering cleanup' }
+      }));
+    } finally {
+      setTriggeringCleanup(false);
+    }
+  };
+
+  const fetchCleanupStats = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/cleanup/status`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCleanupStats(data.state || null);
+      }
+    } catch (e) {
+      console.error('Error fetching cleanup stats:', e);
+    }
+  };
+
   // Fetch existing background jobs on mount
   useEffect(() => {
     const fetchExistingJobs = async () => {
@@ -192,7 +253,7 @@ const Dashboard = ({ token, onLogout }) => {
         if (response.ok) {
           const jobs = await response.json();
           const existingFiles = Object.keys(jobs)
-            .filter(name => name !== 'migrate_existing_posts_images.py')
+            .filter(name => name !== 'migrate_existing_posts_images.py' && name !== 'cleanup_wp_duplicates.py')
             .map(name => ({ name }));
           if (existingFiles.length > 0) {
             setFiles(existingFiles);
@@ -209,7 +270,7 @@ const Dashboard = ({ token, onLogout }) => {
                 message = 'Processing...';
               } else if (serverJob.status === 'completed') {
                 state = 'success';
-                message = 'Finished successfully';
+                message = serverJob.error || 'Finished successfully';
               } else if (serverJob.status === 'failed') {
                 state = 'error';
                 message = serverJob.error || 'Processing failed';
@@ -226,6 +287,7 @@ const Dashboard = ({ token, onLogout }) => {
       }
     };
     fetchExistingJobs();
+    fetchCleanupStats();
   }, [token]);
 
   // Poll jobs status if any job is queued or processing
@@ -247,6 +309,7 @@ const Dashboard = ({ token, onLogout }) => {
         });
         if (response.ok) {
           const jobs = await response.json();
+          fetchCleanupStats();
           setStatusMap(prev => {
             const updated = { ...prev };
             let hasChanges = false;
@@ -567,6 +630,118 @@ const Dashboard = ({ token, onLogout }) => {
                 ? 'Running CPT Migration...'
                 : 'Start WordPress CPT Migration'}
             </button>
+          </div>
+
+          <div style={{ marginTop: '2.5rem', borderTop: '1px solid var(--surface-border)', paddingTop: '2rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'linear-gradient(to right, #fff, #94a3b8)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                <Trash2 size={18} color="#ef4444" style={{ stroke: '#ef4444' }} /> WordPress Duplicate Slugs Cleaner
+              </h3>
+              {cleanupStats && (
+                <span style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem', borderRadius: '1rem', background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.3)', fontWeight: 500 }}>
+                  {cleanupStats.total_duplicates_cleaned || 0} Duplicates Cleaned
+                </span>
+              )}
+            </div>
+            <p className="subtitle" style={{ fontSize: '0.875rem', marginBottom: '1.25rem', color: 'var(--text-secondary)' }}>
+              Scan WordPress for posts with duplicate auto-increment slugs (e.g. <code>slug-2</code>, <code>slug-3</code>) and safely move them to trash. Processes up to <strong>500 posts per run</strong> and resumes where it left off on the next run.
+            </p>
+
+            {cleanupStats && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem', background: 'rgba(255, 255, 255, 0.03)', padding: '0.75rem 1rem', borderRadius: '0.5rem', border: '1px solid var(--surface-border)' }}>
+                <div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Posts Examined</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary)' }}>{cleanupStats.total_posts_examined || 0}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Duplicates Cleaned</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 600, color: '#ef4444' }}>{cleanupStats.total_duplicates_cleaned || 0}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Status / Progress</div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 500, color: cleanupStats.finished ? '#10b981' : '#38bdf8', marginTop: '0.2rem' }}>
+                    {cleanupStats.finished ? '✓ All Posts Done' : `Page ${cleanupStats.current_page || 1} (${cleanupStats.current_endpoint_idx === 0 ? 'Posts' : 'Pages'})`}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {statusMap['cleanup_wp_duplicates.py'] && (
+              <div style={{ marginBottom: '1.25rem' }}>
+                <div className={`pipeline-status-banner pipeline-status-${statusMap['cleanup_wp_duplicates.py'].state === 'queued' || statusMap['cleanup_wp_duplicates.py'].state === 'processing' ? 'running' : statusMap['cleanup_wp_duplicates.py'].state}`} style={{ marginTop: 0 }}>
+                  {statusMap['cleanup_wp_duplicates.py'].state === 'processing' && <Loader2 className="animate-spin" size={20} color="#fbbf24" />}
+                  {statusMap['cleanup_wp_duplicates.py'].state === 'queued' && <Loader2 className="animate-pulse" size={20} color="#818cf8" />}
+                  {statusMap['cleanup_wp_duplicates.py'].state === 'success' && <CheckCircle size={20} color="#34d399" />}
+                  {statusMap['cleanup_wp_duplicates.py'].state === 'error' && <XCircle size={20} color="#f87171" />}
+                  <span style={{ marginLeft: '0.5rem' }}>
+                    Cleaner: {statusMap['cleanup_wp_duplicates.py'].message}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button
+                className="primary-btn"
+                style={{ 
+                  background: 'linear-gradient(135deg, #ef4444, #dc2626)', 
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.5rem'
+                }}
+                onClick={() => triggerCleanup(false)}
+                disabled={
+                  triggeringCleanup ||
+                  statusMap['cleanup_wp_duplicates.py']?.state === 'queued' ||
+                  statusMap['cleanup_wp_duplicates.py']?.state === 'processing'
+                }
+              >
+                {statusMap['cleanup_wp_duplicates.py']?.state === 'processing' || statusMap['cleanup_wp_duplicates.py']?.state === 'queued' ? (
+                  <Loader2 className="animate-spin" size={20} />
+                ) : (
+                  <Trash2 size={20} />
+                )}
+                {statusMap['cleanup_wp_duplicates.py']?.state === 'processing' || statusMap['cleanup_wp_duplicates.py']?.state === 'queued'
+                  ? 'Cleaning WordPress Duplicates...'
+                  : cleanupStats && cleanupStats.total_posts_examined > 0
+                    ? 'Clean Next 500 Posts'
+                    : 'Start Duplicate Cleanup (500 Posts)'}
+              </button>
+
+              {cleanupStats && (cleanupStats.total_posts_examined > 0 || cleanupStats.finished) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('Reset cleanup checkpoint back to Page 1? Next run will start from the beginning.')) {
+                      triggerCleanup(true);
+                    }
+                  }}
+                  disabled={
+                    triggeringCleanup ||
+                    statusMap['cleanup_wp_duplicates.py']?.state === 'queued' ||
+                    statusMap['cleanup_wp_duplicates.py']?.state === 'processing'
+                  }
+                  title="Reset checkpoint to start scanning from the beginning"
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid var(--surface-border)',
+                    color: 'var(--text-secondary)',
+                    borderRadius: '0.5rem',
+                    padding: '0 1rem',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  <RotateCcw size={16} />
+                  Reset
+                </button>
+              )}
+            </div>
           </div>
         </>
       ) : (

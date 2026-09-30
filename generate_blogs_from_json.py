@@ -8,7 +8,8 @@ from internal_linker import InternalLinker
 from formatter import format_blog_html
 from generate_blogs_from_excel import (
     clean_slug, normalize_category, generate_blog_post, 
-    push_post_to_wordpress, EXPORT_MODE, WP_POST_STATUS
+    push_post_to_wordpress, EXPORT_MODE, WP_POST_STATUS,
+    find_existing_post_id
 )
 
 def main():
@@ -28,13 +29,19 @@ def main():
         return
 
     all_pages = []
+    seen_batch_slugs = set()
     for item in items:
         topic = item.get("topic", "").strip()
         keyword = item.get("keyword", "").strip()
         category = item.get("category", "").strip()
         if not topic or not keyword:
             continue
-        slug = "/" + clean_slug(topic) + "/"
+        clean_topic_slug = clean_slug(topic)
+        if clean_topic_slug in seen_batch_slugs:
+            print(f" - [Batch Deduplication] Skipping duplicate JSON topic slug: '{clean_topic_slug}'")
+            continue
+        seen_batch_slugs.add(clean_topic_slug)
+        slug = "/" + clean_topic_slug + "/"
         all_pages.append({
             "sheet": "JSON_Import",
             "category": category,
@@ -43,7 +50,7 @@ def main():
             "slug": slug
         })
 
-    print(f"[INFO] Parsed {len(all_pages)} total pages from JSON.")
+    print(f"[INFO] Parsed {len(all_pages)} total unique pages from JSON.")
     if not all_pages:
         print("[WARNING] No topics parsed. Exiting.")
         return
@@ -101,25 +108,17 @@ def main():
             print(f"[{idx+1}/{len(all_pages)}] Slug already registered in database: {leaf_slug}")
             continue
 
-        # Check if already exists on WordPress API by slug if credentials configured
+        # Check if already exists on WordPress API by slug using robust multi-status lookup
         already_on_wp = False
         if WP_URL and WP_USER and WP_APP_PASSWORD:
-            try:
-                check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
-                check_resp = requests.get(
-                    check_endpoint,
-                    params={"slug": leaf_slug, "status": "any"},
-                    auth=(WP_USER, WP_APP_PASSWORD),
-                    headers=headers,
-                    timeout=10
-                )
-                if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
-                    print(f"[{idx+1}/{len(all_pages)}] Slug already exists on WordPress: {leaf_slug}")
-                    db_helper.register_slug(slug)
-                    db_helper.register_slug(leaf_slug)
-                    already_on_wp = True
-            except Exception as e:
-                print(f" - [Warning] Error checking WP slug '{leaf_slug}': {e}")
+            existing_id = find_existing_post_id(leaf_slug, "posts", headers, WP_USER, WP_APP_PASSWORD, WP_URL)
+            if existing_id:
+                print(f"[{idx+1}/{len(all_pages)}] Slug already exists on WordPress (ID {existing_id}): {leaf_slug}")
+                db_helper.register_slug(slug)
+                db_helper.register_slug(leaf_slug)
+                generated_slugs.add(slug)
+                generated_slugs.add(leaf_slug)
+                already_on_wp = True
 
         if already_on_wp:
             continue

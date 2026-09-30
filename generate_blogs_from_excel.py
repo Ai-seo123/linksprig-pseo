@@ -365,14 +365,16 @@ def find_existing_post_id(post_slug, wp_endpoint, headers, auth_user, auth_passw
         return None
 
     wp_url = wp_url or WP_URL
+    leaf_slug = str(post_slug).strip("/").split("/")[-1]
     check_endpoint = f"{wp_url.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}"
+    valid_statuses = "publish,draft,pending,private,future"
     try:
         check_resp = requests.get(
             check_endpoint,
-            params={"slug": post_slug, "status": "any"},
+            params={"slug": leaf_slug, "status": valid_statuses},
             auth=(auth_user, auth_password),
             headers=headers,
-            timeout=10,
+            timeout=15,
         )
         if check_resp.status_code == 200:
             payload = check_resp.json()
@@ -380,8 +382,23 @@ def find_existing_post_id(post_slug, wp_endpoint, headers, auth_user, auth_passw
                 return payload[0].get("id")
             if isinstance(payload, dict) and payload.get("id"):
                 return payload.get("id")
+        elif check_resp.status_code == 400:
+            # Fallback without status parameter if endpoint enforces custom status filter
+            fallback_resp = requests.get(
+                check_endpoint,
+                params={"slug": leaf_slug},
+                auth=(auth_user, auth_password),
+                headers=headers,
+                timeout=15,
+            )
+            if fallback_resp.status_code == 200:
+                payload = fallback_resp.json()
+                if isinstance(payload, list) and len(payload) > 0:
+                    return payload[0].get("id")
+                if isinstance(payload, dict) and payload.get("id"):
+                    return payload.get("id")
     except Exception as e:
-        print(f" - [Warning] Error checking if slug '{post_slug}' exists on WP: {e}")
+        print(f" - [Warning] Error checking if slug '{leaf_slug}' exists on WP: {e}")
 
     return None
 
@@ -682,11 +699,27 @@ def main():
         return
 
     all_pages = []
-    for sheet_name in xl.sheet_names:
-        if sheet_name not in ["26thmay'26", "28thmay'26", "6thJune'26"]: continue
+    target_sheets = [s for s in xl.sheet_names if s in ["26thmay'26", "28thmay'26", "6thJune'26"]]
+    # If none of the specific legacy sheet names match, inspect all available sheets
+    sheets_to_process = target_sheets if target_sheets else xl.sheet_names
+
+    for sheet_name in sheets_to_process:
         df = xl.parse(sheet_name)
         current_category = "General"
         
+        # Check if sheet has named column headers
+        header_map = {}
+        for col_idx, col_name in enumerate(df.columns):
+            c_str = str(col_name).strip().lower()
+            if any(k in c_str for k in ["topic", "title", "blog title", "article"]):
+                header_map["topic"] = col_idx
+            elif any(k in c_str for k in ["keyword", "focus keyword", "target kw"]):
+                header_map["keyword"] = col_idx
+            elif any(k in c_str for k in ["category"]):
+                header_map["category"] = col_idx
+            elif any(k in c_str for k in ["slug", "url"]):
+                header_map["slug"] = col_idx
+
         for idx, row in df.iterrows():
             row_vals = [str(val).strip() if pd.notna(val) else "" for val in row]
             if not any(row_vals): continue
@@ -695,17 +728,54 @@ def main():
                 current_category = non_empty_vals[0]
                 continue
             
-            keyword, topic, slug = "", "", ""
-            if sheet_name == "26thmay'26" and len(row_vals) >= 3:
+            keyword, topic, explicit_slug = "", "", ""
+            
+            # 1. Try resolving using named column headers
+            if "topic" in header_map and "keyword" in header_map:
+                topic = row_vals[header_map["topic"]] if header_map["topic"] < len(row_vals) else ""
+                keyword = row_vals[header_map["keyword"]] if header_map["keyword"] < len(row_vals) else ""
+                if "category" in header_map and header_map["category"] < len(row_vals):
+                    cat_val = row_vals[header_map["category"]]
+                    if cat_val: current_category = cat_val
+                if "slug" in header_map and header_map["slug"] < len(row_vals):
+                    explicit_slug = row_vals[header_map["slug"]]
+            # 2. Legacy sheet positional fallback
+            elif sheet_name == "26thmay'26" and len(row_vals) >= 3:
                 keyword, topic = row_vals[1], row_vals[2]
             elif sheet_name == "28thmay'26" and len(row_vals) >= 4:
-                keyword, topic, slug = row_vals[1], row_vals[2], row_vals[3]
+                keyword, topic, explicit_slug = row_vals[1], row_vals[2], row_vals[3]
             elif sheet_name == "6thJune'26" and len(row_vals) >= 3:
-                keyword, topic, slug = row_vals[0], row_vals[1], row_vals[2]
+                keyword, topic = row_vals[0], row_vals[1]
+                # In 6thJune sheet, index 2 may be Category; only treat as slug if it looks like a valid slug
+                candidate_slug = row_vals[2]
+                if not any(cat_indicator in candidate_slug.lower() for cat_indicator in ["category", "general", "strategy", "technology", "guide", "copywriting", "lead gen"]):
+                    explicit_slug = candidate_slug
+            elif len(row_vals) >= 2:
+                # Generic fallback: assume first two non-empty columns are keyword/topic or topic/keyword
+                keyword, topic = row_vals[0], row_vals[1]
             
             if not topic or not keyword or "keyword" in keyword.lower() or "topic" in topic.lower(): continue
-            slug = "/" + clean_slug(topic) + "/" if not slug else slug
+            
+            # Derive deterministic clean slug from topic unless a valid non-category slug was provided
+            clean_topic_slug = clean_slug(topic)
+            if not explicit_slug or any(cat_indicator in explicit_slug.lower() for cat_indicator in ["category", "general", "strategy", "technology", "guide", "copywriting", "lead gen"]):
+                slug = "/" + clean_topic_slug + "/"
+            else:
+                slug = "/" + clean_slug(explicit_slug) + "/"
+                
             all_pages.append({"sheet": sheet_name, "category": current_category, "keyword": keyword, "title": topic, "slug": slug})
+
+    # In-Batch Deduplication: prevent multiple rows in the same Excel from generating the same slug
+    seen_batch_slugs = set()
+    deduped_pages = []
+    for p in all_pages:
+        leaf = p["slug"].strip("/").split("/")[-1]
+        if leaf and leaf not in seen_batch_slugs:
+            seen_batch_slugs.add(leaf)
+            deduped_pages.append(p)
+        else:
+            print(f" - [Batch Deduplication] Skipping duplicate slug row: '{leaf}' (Topic: '{p['title']}')")
+    all_pages = deduped_pages
 
     POST_TYPE_MAP = {
         "Category A — LinkedIn Outreach Strategy": "strategy",
@@ -744,25 +814,18 @@ def main():
         if slug in generated_slugs or leaf_slug in generated_slugs:
             print(f"[{idx+1}/{len(all_pages)}] Slug already registered in database: {leaf_slug}")
             continue
-        # Check if already exists on WordPress API by slug if credentials configured
+
+        # Check if already exists on WordPress API by slug using robust multi-status lookup
         already_on_wp = False
         if WP_URL and WP_USER and WP_APP_PASSWORD:
-            try:
-                check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
-                check_resp = requests.get(
-                    check_endpoint,
-                    params={"slug": leaf_slug, "status": "any"},
-                    auth=(WP_USER, WP_APP_PASSWORD),
-                    headers=headers,
-                    timeout=10
-                )
-                if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
-                    print(f"[{idx+1}/{len(all_pages)}] Slug already exists on WordPress: {leaf_slug}")
-                    db_helper.register_slug(slug)
-                    db_helper.register_slug(leaf_slug)
-                    already_on_wp = True
-            except Exception as e:
-                print(f" - [Warning] Error checking WP slug '{leaf_slug}': {e}")
+            existing_id = find_existing_post_id(leaf_slug, "posts", headers, WP_USER, WP_APP_PASSWORD, WP_URL)
+            if existing_id:
+                print(f"[{idx+1}/{len(all_pages)}] Slug already exists on WordPress (ID {existing_id}): {leaf_slug}")
+                db_helper.register_slug(slug)
+                db_helper.register_slug(leaf_slug)
+                generated_slugs.add(slug)
+                generated_slugs.add(leaf_slug)
+                already_on_wp = True
 
         if already_on_wp:
             continue
@@ -801,6 +864,8 @@ def main():
         else:
             # If CSV only, immediately register incrementally
             db_helper.register_slug(page_data["slug"])
+            generated_slugs.add(slug)
+            generated_slugs.add(leaf_slug)
         time.sleep(1)
         
     if rows_for_csv:

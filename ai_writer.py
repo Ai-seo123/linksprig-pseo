@@ -68,18 +68,18 @@ class AIWriter:
                 
                 result = json.loads(text)
                 
-                # Ensure slug is generated if missing
-                if not result.get("slug"):
-                    if post_type == "compare":
-                        result["slug"] = f"{clean_slug(entity_data['competitor'])}-vs-linksprig"
-                    elif post_type == "industry":
-                        result["slug"] = f"link-building-software-for-{clean_slug(entity_data['industry'])}"
-                    elif post_type == "problem":
-                        result["slug"] = f"how-to-fix-{clean_slug(entity_data['issue'])}"
-                    elif post_type == "use_case":
-                        result["slug"] = f"{clean_slug(entity_data['use_case'])}-outreach-tool"
-                    else:
-                        result["slug"] = clean_slug(entity_data['guide'])
+                # Enforce deterministic, canonical slug for each CPT entity (prevent AI hallucinations)
+                if post_type == "compare":
+                    canonical_slug = f"{clean_slug(entity_data['competitor'])}-vs-linksprig"
+                elif post_type == "industry":
+                    canonical_slug = f"link-building-software-for-{clean_slug(entity_data['industry'])}"
+                elif post_type == "problem":
+                    canonical_slug = f"how-to-fix-{clean_slug(entity_data['issue'])}"
+                elif post_type == "use_case":
+                    canonical_slug = f"{clean_slug(entity_data['use_case'])}-outreach-tool"
+                else:
+                    canonical_slug = clean_slug(entity_data['guide'])
+                result["slug"] = canonical_slug
                 
                 return result
                 

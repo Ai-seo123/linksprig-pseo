@@ -6,7 +6,11 @@ from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import requests
 
-from config import JWT_SECRET, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, CAPTCHA_SECRET, DISABLE_CAPTCHA, ADMIN_PASSWORD_HASH
+try:
+    from .config import JWT_SECRET, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, CAPTCHA_SECRET, DISABLE_CAPTCHA, ADMIN_PASSWORD_HASH
+except ImportError:
+    from config import JWT_SECRET, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, CAPTCHA_SECRET, DISABLE_CAPTCHA, ADMIN_PASSWORD_HASH
+
 
 security = HTTPBearer()
 

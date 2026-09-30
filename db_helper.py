@@ -30,14 +30,30 @@ else:
     print("[DB] MONGO_URI not found. Falling back to local storage.")
 
 
-# --- SLUG REGISTRY METHODS ---
+def normalize_slug(slug: str) -> str:
+    """Normalize slug by stripping slashes, whitespace, and taking leaf component in lowercase."""
+    if not slug:
+        return ""
+    s = str(slug).strip().lower()
+    return s.strip("/").split("/")[-1]
+
 
 def get_all_registered_slugs() -> set:
-    """Fetch all registered slugs from MongoDB or local JSON fallback"""
+    """Fetch all registered slugs from MongoDB or local JSON fallback, normalized."""
+    results = set()
     if _use_mongo:
         try:
-            slugs = _db["slugs"].find({}, {"_id": 1})
-            return {doc["_id"] for doc in slugs}
+            slugs = _db["slugs"].find({}, {"_id": 1, "slug": 1})
+            for doc in slugs:
+                raw_id = str(doc.get("_id", ""))
+                raw_slug = str(doc.get("slug", ""))
+                if raw_id:
+                    results.add(raw_id)
+                    results.add(normalize_slug(raw_id))
+                if raw_slug:
+                    results.add(raw_slug)
+                    results.add(normalize_slug(raw_slug))
+            return {s for s in results if s}
         except Exception as e:
             print(f"[DB] [Error] MongoDB query failed in get_all_registered_slugs: {e}. Falling back to local.")
             
@@ -45,23 +61,30 @@ def get_all_registered_slugs() -> set:
     if os.path.exists(REGISTRY_PATH):
         try:
             with open(REGISTRY_PATH, "r", encoding="utf-8") as f:
-                return set(json.load(f))
+                items = json.load(f)
+                for item in items:
+                    raw = str(item).strip()
+                    if raw:
+                        results.add(raw)
+                        results.add(normalize_slug(raw))
+                return {s for s in results if s}
         except Exception as e:
             print(f"[DB] [Warning] Failed to read local registry: {e}")
-    return set()
+    return results
 
 
 def register_slug(slug: str) -> bool:
-    """Register a slug incrementally in MongoDB or local JSON fallback"""
+    """Register a slug incrementally in MongoDB and local JSON fallback, storing both raw and normalized."""
     if not slug:
         return False
         
+    norm_slug = normalize_slug(slug)
     registered = False
     if _use_mongo:
         try:
             _db["slugs"].update_one(
-                {"_id": slug},
-                {"$set": {"slug": slug, "registered_at": datetime.utcnow()}},
+                {"_id": norm_slug},
+                {"$set": {"slug": norm_slug, "raw_slug": str(slug), "registered_at": datetime.utcnow()}},
                 upsert=True
             )
             registered = True
@@ -78,13 +101,26 @@ def register_slug(slug: str) -> bool:
                     slugs = set(json.load(f))
             except Exception:
                 pass
-        slugs.add(slug)
+        slugs.add(str(slug).strip())
+        if norm_slug:
+            slugs.add(norm_slug)
         with open(REGISTRY_PATH, "w", encoding="utf-8") as f:
             json.dump(list(slugs), f, indent=2)
         return True
     except Exception as e:
         print(f"[DB] [Error] Failed to write local registry: {e}")
         return registered
+
+
+def is_slug_registered(slug: str, registered_set: set = None) -> bool:
+    """Helper to check if slug or leaf slug is already registered."""
+    if not slug:
+        return False
+    norm = normalize_slug(slug)
+    if registered_set is not None:
+        return norm in registered_set or slug in registered_set
+    all_slugs = get_all_registered_slugs()
+    return norm in all_slugs or slug in all_slugs
 
 
 # --- JOB TRACKING METHODS ---

@@ -2,6 +2,8 @@ import os
 import sys
 import shutil
 import subprocess
+import json
+import re
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, BackgroundTasks
 
 # Add parent directory to path so db_helper can be imported
@@ -12,9 +14,15 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from .auth import verify_password, create_access_token, verify_captcha, get_current_user
-from .config import ADMIN_PASSWORD_HASH
-from .topic_generator import generate_topics
+try:
+    from .auth import verify_password, create_access_token, verify_captcha, get_current_user
+    from .config import ADMIN_PASSWORD_HASH
+    from .topic_generator import generate_topics
+except ImportError:
+    from auth import verify_password, create_access_token, verify_captcha, get_current_user
+    from config import ADMIN_PASSWORD_HASH
+    from topic_generator import generate_topics
+
 
 app = FastAPI(title="LinkSprig API", version="1.0.0")
 
@@ -201,6 +209,110 @@ async def trigger_migration(
     background_tasks.add_task(run_migration_task, job_id)
     
     return {"message": "Migration queued for processing", "job_id": job_id}
+
+
+def run_cleanup_task(job_id: str, reset: bool = False):
+    """Background task to run the duplicate cleanup script (500 posts per batch)"""
+    db_helper.update_job_status(job_id, "processing")
+
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(backend_dir)
+    script_path = os.path.join(parent_dir, "cleanup_wp_duplicates.py")
+    
+    if os.path.exists(script_path):
+        env = os.environ.copy()
+        env["PYTHONWARNINGS"] = "ignore"
+        try:
+            venv_python = os.path.join(parent_dir, ".venv", "Scripts", "python.exe")
+            if not os.path.exists(venv_python):
+                venv_python = "python"
+                
+            cmd = [venv_python, script_path, "--batch-size", "500"]
+            if reset:
+                cmd.append("--reset")
+
+            result = subprocess.run(
+                cmd, 
+                env=env, 
+                cwd=parent_dir, 
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            out = result.stdout or ""
+            match = re.search(r"Duplicates removed this run\s*:\s*(\d+)", out)
+            cleaned_count = match.group(1) if match else "0"
+            if "CLEANUP ENGINE COMPLETED" in out:
+                summary = f"All post types finished! Removed {cleaned_count} duplicates in this batch."
+            else:
+                summary = f"Batch finished: {cleaned_count} duplicates moved to trash. Ready for next 500."
+
+            db_helper.update_job_status(job_id, "completed", error=summary)
+            print(f"Successfully ran cleanup script: {summary}")
+        except subprocess.CalledProcessError as e:
+            err_output = (e.stderr or "").strip()
+            out_output = (e.stdout or "").strip()
+            error_details = err_output if err_output else out_output
+            if not error_details:
+                error_details = f"Script failed with exit code {e.returncode}"
+            else:
+                if len(error_details) > 400:
+                    error_details = "..." + error_details[-397:]
+            db_helper.update_job_status(job_id, "failed", error_details)
+            print(f"Error executing cleanup script: {e}")
+        except Exception as e:
+            db_helper.update_job_status(job_id, "failed", str(e))
+            print(f"Error executing cleanup script: {e}")
+    else:
+        db_helper.update_job_status(job_id, "failed", "Cleanup script missing on server")
+        print(f"Cleanup script missing at: {script_path}")
+
+
+class CleanupRequest(BaseModel):
+    reset: bool = False
+
+
+@app.post("/api/cleanup")
+async def trigger_cleanup(
+    background_tasks: BackgroundTasks,
+    request: CleanupRequest = None,
+    username: str = Depends(get_current_user)
+):
+    job_id = "cleanup_wp_duplicates.py"
+    
+    # Check if there is an active job running for cleanup
+    existing_job = db_helper.get_job_status(job_id)
+    if existing_job and existing_job.get("status") in ["queued", "processing"]:
+        raise HTTPException(
+            status_code=400,
+            detail="A duplicate cleanup job is already running. Please wait until it completes."
+        )
+        
+    reset = request.reset if request else False
+    db_helper.update_job_status(job_id, "queued")
+    background_tasks.add_task(run_cleanup_task, job_id, reset)
+    
+    return {"message": "Cleanup job queued for processing (500 posts batch)", "job_id": job_id}
+
+
+@app.get("/api/cleanup/status")
+def get_cleanup_status(username: str = Depends(get_current_user)):
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(backend_dir)
+    state_file = os.path.join(parent_dir, "output", "cleanup_state.json")
+    state = {}
+    if os.path.exists(state_file):
+        try:
+            with open(state_file, "r", encoding="utf-8") as f:
+                state = json.load(f)
+        except Exception:
+            pass
+    job = db_helper.get_job_status("cleanup_wp_duplicates.py") or {}
+    return {
+        "job": job,
+        "state": state
+    }
+
 
 
 @app.post("/api/upload")

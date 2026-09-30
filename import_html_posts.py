@@ -127,6 +127,50 @@ def get_wp_category_id(category_name, wp_url, auth_user, auth_password):
         
     return None
 
+def find_existing_post_id(post_slug, wp_endpoint, headers, auth_user, auth_password, wp_url=None):
+    """
+    Checks if a post with the given slug already exists on WordPress.
+    """
+    if not post_slug:
+        return None
+
+    wp_url = wp_url or WP_URL
+    leaf_slug = str(post_slug).strip("/").split("/")[-1]
+    check_endpoint = f"{wp_url.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}"
+    valid_statuses = "publish,draft,pending,private,future"
+    try:
+        check_resp = requests.get(
+            check_endpoint,
+            params={"slug": leaf_slug, "status": valid_statuses},
+            auth=(auth_user, auth_password),
+            headers=headers,
+            timeout=15,
+        )
+        if check_resp.status_code == 200:
+            payload = check_resp.json()
+            if isinstance(payload, list) and len(payload) > 0:
+                return payload[0].get("id")
+            if isinstance(payload, dict) and payload.get("id"):
+                return payload.get("id")
+        elif check_resp.status_code == 400:
+            fallback_resp = requests.get(
+                check_endpoint,
+                params={"slug": leaf_slug},
+                auth=(auth_user, auth_password),
+                headers=headers,
+                timeout=15,
+            )
+            if fallback_resp.status_code == 200:
+                payload = fallback_resp.json()
+                if isinstance(payload, list) and len(payload) > 0:
+                    return payload[0].get("id")
+                if isinstance(payload, dict) and payload.get("id"):
+                    return payload.get("id")
+    except Exception as e:
+        print(f" - [Warning] Error checking if slug '{leaf_slug}' exists on WP: {e}")
+
+    return None
+
 def push_posts_to_wordpress(rows):
     print(f"[INFO] Pushing {len(rows)} posts directly to WordPress REST API at {WP_URL}")
     
@@ -156,25 +200,20 @@ def push_posts_to_wordpress(rows):
             
         wp_slug = post_slug.strip("/").split("/")[-1] if "/" in post_slug else post_slug
         
+        # Check against local registry
+        if post_slug in generated_slugs or wp_slug in generated_slugs:
+            print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already registered in database: {wp_slug}")
+            existing_count += 1
+            continue
+
         # Check if post already exists on WordPress API by slug
-        try:
-            check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
-            check_resp = requests.get(
-                check_endpoint,
-                params={"slug": wp_slug, "status": "any"},
-                auth=(WP_USER, WP_APP_PASSWORD),
-                headers=headers,
-                timeout=30
-            )
-            if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
-                print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already exists on WordPress: {wp_slug}")
-                db_helper.register_slug(post_slug)
-                db_helper.register_slug(wp_slug)
-                existing_count += 1
-                continue
-        except Exception as e:
-            print(f" - [Warning] Error checking if slug '{wp_slug}' exists on WP: {e}")
-            print(f" - [Attempting Upload {idx+1}/{len(rows)}] Proceeding with upload for '{post_slug}'.")
+        existing_id = find_existing_post_id(wp_slug, "posts", headers, WP_USER, WP_APP_PASSWORD, WP_URL)
+        if existing_id:
+            print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already exists on WordPress: {wp_slug} (ID: {existing_id})")
+            db_helper.register_slug(post_slug)
+            db_helper.register_slug(wp_slug)
+            existing_count += 1
+            continue
             
         cat_name = row.get("category", "")
         cat_id = get_wp_category_id(cat_name, WP_URL, WP_USER, WP_APP_PASSWORD) if cat_name else None

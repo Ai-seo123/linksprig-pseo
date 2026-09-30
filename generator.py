@@ -264,6 +264,51 @@ def upload_image_to_wordpress(img_buffer, slug_name):
             print(f" - [Media Error] WordPress Upload Exception: {e}")
     return None, None
 
+
+def find_existing_post_id(post_slug, wp_endpoint, headers, auth_user, auth_password, wp_url=None):
+    """
+    Checks if a post with the given slug already exists on WordPress to update it instead of duplicating.
+    """
+    if not post_slug:
+        return None
+
+    wp_url = wp_url or WP_URL
+    leaf_slug = str(post_slug).strip("/").split("/")[-1]
+    check_endpoint = f"{wp_url.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}"
+    valid_statuses = "publish,draft,pending,private,future"
+    try:
+        check_resp = requests.get(
+            check_endpoint,
+            params={"slug": leaf_slug, "status": valid_statuses},
+            auth=(auth_user, auth_password),
+            headers=headers,
+            timeout=15,
+        )
+        if check_resp.status_code == 200:
+            payload = check_resp.json()
+            if isinstance(payload, list) and len(payload) > 0:
+                return payload[0].get("id")
+            if isinstance(payload, dict) and payload.get("id"):
+                return payload.get("id")
+        elif check_resp.status_code == 400:
+            fallback_resp = requests.get(
+                check_endpoint,
+                params={"slug": leaf_slug},
+                auth=(auth_user, auth_password),
+                headers=headers,
+                timeout=15,
+            )
+            if fallback_resp.status_code == 200:
+                payload = fallback_resp.json()
+                if isinstance(payload, list) and len(payload) > 0:
+                    return payload[0].get("id")
+                if isinstance(payload, dict) and payload.get("id"):
+                    return payload.get("id")
+    except Exception as e:
+        print(f" - [Warning] Error checking if slug '{leaf_slug}' exists on WP: {e}")
+
+    return None
+
 class PSEOEngine:
     def __init__(self):
         self.db_dir = "database"
@@ -440,7 +485,7 @@ class PSEOEngine:
             
             row = {
                 "post_title": page["title"],
-                "post_slug": page["slug"],
+                "post_slug": orig_page.get("slug") or page["slug"],
                 "post_content": content_html,
                 "post_status": "draft",
                 "post_type": post_type,
@@ -625,14 +670,24 @@ class PSEOEngine:
             backoff_factor = 2
             wp_endpoint = "posts" if wp_post_type == "post" else wp_post_type
             
+            existing_post_id = find_existing_post_id(wp_slug, wp_endpoint, headers, WP_USER, WP_APP_PASSWORD, WP_URL)
+            if existing_post_id:
+                print(f" - [Updating] Existing {wp_post_type} found for slug '{wp_slug}' (ID: {existing_post_id})")
+
             for attempt in range(max_retries):
                 try:
-                    endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}"
-                    response = requests.post(endpoint, json=payload, auth=(WP_USER, WP_APP_PASSWORD), headers=headers, timeout=15)
+                    if existing_post_id:
+                        endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}/{existing_post_id}"
+                        response = requests.put(endpoint, json=payload, auth=(WP_USER, WP_APP_PASSWORD), headers=headers, timeout=20)
+                    else:
+                        endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}"
+                        response = requests.post(endpoint, json=payload, auth=(WP_USER, WP_APP_PASSWORD), headers=headers, timeout=20)
                     
                     if response.status_code in (200, 201):
-                        print(f" - [Success] Draft CPT created: '{clean_title}' with identical featured/hero banner!")
+                        action = "updated" if existing_post_id else "created"
+                        print(f" - [Success] Draft CPT {action}: '{clean_title}' with identical featured/hero banner!")
                         pushed_slugs.add(slug)
+                        pushed_slugs.add(wp_slug)
                         break
                     else:
                         print(f" - [Error] Failed CPT post push: {response.status_code} - {response.text}")

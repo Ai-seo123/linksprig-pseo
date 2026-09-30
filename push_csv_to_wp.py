@@ -277,10 +277,10 @@ def push_csv_to_wp():
             check_endpoint = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/{wp_endpoint}"
             check_resp = requests.get(
                 check_endpoint,
-                params={"slug": wp_slug, "status": "any"},
+                params={"slug": wp_slug, "status": "publish,draft,pending,private,future"},
                 auth=(WP_USER, WP_APP_PASSWORD),
                 headers=headers,
-                timeout=10
+                timeout=15
             )
             if check_resp.status_code == 200 and isinstance(check_resp.json(), list) and len(check_resp.json()) > 0:
                 print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already exists on WordPress: {wp_slug}")
@@ -288,6 +288,19 @@ def push_csv_to_wp():
                 db_helper.register_slug(post_slug)
                 db_helper.register_slug(wp_slug)
                 continue
+            elif check_resp.status_code == 400:
+                fallback_resp = requests.get(
+                    check_endpoint,
+                    params={"slug": wp_slug},
+                    auth=(WP_USER, WP_APP_PASSWORD),
+                    headers=headers,
+                    timeout=15
+                )
+                if fallback_resp.status_code == 200 and isinstance(fallback_resp.json(), list) and len(fallback_resp.json()) > 0:
+                    print(f"\n[Skipping {idx+1}/{len(rows)}] Slug already exists on WordPress: {wp_slug}")
+                    db_helper.register_slug(post_slug)
+                    db_helper.register_slug(wp_slug)
+                    continue
         except Exception as e:
             print(f" - [Warning] Error checking if slug '{wp_slug}' exists on WP: {e}")
             # Resilient WP API Check: Safely skip this post instead of uploading duplicate
